@@ -1,0 +1,1928 @@
+import sys
+from PyQt5 import QtWidgets, QtGui, QtCore
+import numpy as np
+import datetime
+import matplotlib.dates as mdates
+import serial
+import serial.tools
+import serial.tools.list_ports
+import time
+import pyqtgraph as pg
+import os
+import ctypes as ctype
+
+pg.setConfigOptions(useOpenGL=False)
+
+class GraphErstellen(QtWidgets.QWidget): # Plottet einen Graphen
+    def __init__(self, title = "Titel"):
+        super().__init__()
+        self.canvas = pg.PlotWidget()
+        # Festlegen der Hintergrundfarbe des Graphen
+        self.canvas.setBackground("#414141") # Setzt die Hintergrundfarbe des Graphen
+        #self.ax.set_facecolor("#313131FF")  # Setzt die Hintergrundfarbe des Graphen innen
+        self.canvas.showGrid(x=True, y=True, alpha=0.3)
+        self.canvas.setTitle(title, color = "white", size = "16pt")
+        self.canvas.getAxis("left").setTextPen("w")
+        self.canvas.getAxis("bottom").setTextPen("w")
+
+        self.layout = QtWidgets.QGridLayout()
+        self.layout.setContentsMargins(10,10,10,10)  # Abstand vom Graph zum Rand des Widgets	 
+        # Hinzufügen des Graphen zum Layout
+        self.layout.addWidget(self.canvas)
+        self.setLayout(self.layout)
+
+        # Formatierung der Achsen
+        color = "w"
+        self.canvas.getAxis("left").setTextPen(color)
+        self.canvas.getAxis("bottom").setTextPen(color)
+
+        self.curve = self.canvas.plot()
+
+    def plot(self, x, y, **kwargs): # erlaubt das Hinzufügen von Daten und weitern Parametern     
+        self.canvas.plot(x, y, **kwargs)
+
+class StartKnopfi(QtWidgets.QDialog):
+    def __init__(self, style):
+        super().__init__()
+        self.layout = QtWidgets.QHBoxLayout()
+    
+        self.AN_knopfi = QtWidgets.QPushButton("Start")
+        self.AN_knopfi.setStyleSheet(style)
+        self.AN_knopfi.setCheckable(True)
+        self.AN_knopfi.toggle()
+        self.layout.addWidget(self.AN_knopfi)
+
+        self.AUS_knopfi = QtWidgets.QPushButton("Stop")
+        self.AUS_knopfi.setStyleSheet(style)
+        self.AUS_knopfi.setCheckable(True)
+        self.AUS_knopfi.toggle()
+        self.layout.addWidget(self.AUS_knopfi)
+
+        self.button_group = QtWidgets.QButtonGroup(self)
+        self.button_group.setExclusive(True)
+        self.button_group.addButton(self.AN_knopfi)
+        self.button_group.addButton(self.AUS_knopfi)
+
+
+        self.setLayout(self.layout)
+
+class SignalLeseGerät(QtCore.QThread):
+    header_signal = QtCore.pyqtSignal(list)
+    werte_signal  = QtCore.pyqtSignal(list)
+
+    def __init__(self, port = None):
+        super().__init__()
+
+        self.port = port
+        self.bautrate = 9600
+        self.running = False
+
+    def run(self):
+        self.running = True
+        self.werte = []
+        self.serial_port = self.port
+        with self.serial_port as ser:
+            while self.running:
+                try:    
+                    line = ser.readline()
+                    if not line:
+                        print("Warte auf Werte...")
+                        continue
+                except (serial.SerialException, OSError):
+                    print("Verbindung unterbrochen/ gestört")
+                try:
+                    decoded_line = line.decode("utf-8").strip()
+                    #print("Empfangene Zeile:", decoded_line)
+
+                    if not decoded_line:
+                        continue
+
+                    # Aufteilen der CSV
+                    daten_zeilenweise = decoded_line.split(",")
+
+                    if daten_zeilenweise[0].startswith("ID"):
+                        id_str = daten_zeilenweise[0]
+                        try:
+                            id = int(id_str[2:])
+                        except ValueError:
+                            print("Ungültige ID:", id_str)
+                            continue
+                        raw_werte = daten_zeilenweise[1:]
+                        daten_zeilenweise = [id] + raw_werte
+                        #print("mit ID:", daten_zeilenweise)
+                        self.werte_signal.emit(daten_zeilenweise)
+                        self.werte.append(daten_zeilenweise)
+                    else:
+                        print("Zeile ohne ID-Präfix empfangen, wird ignoriert:" , daten_zeilenweise)
+                        continue
+                    
+                    #print(daten_zeilenweise)
+                    
+                except Exception as e:
+                    print("Fehler beim Dekodieren:", e)
+                    continue
+                
+    def stop(self):
+        self.running = False
+        self.wait()
+
+class ActionButton(QtWidgets.QDialog):
+    def __init__(self, cat = None, command = None, style = None, port = None, mode = None):    # cat: Kategorie, text: Button-Text, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
+        super().__init__()
+        self.cat = cat
+        self.command = command
+        self.port = port
+        self.mode = mode
+        self.layout = QtWidgets.QHBoxLayout()
+        if mode == "redgreen":
+            label_text = f"{cat} Standby"
+            self.action_knopfi = QtWidgets.QPushButton(label_text)
+            self.action_knopfi.setStyleSheet(style)
+            self.action_knopfi.setCheckable(True)
+            self.action_knopfi.setChecked(False)
+            self.base_style = style or "font-size: 14px; color: white;"
+            self.action_knopfi.setFixedWidth(356)
+            self.action_knopfi.toggled.connect(self.KOMMANDOOO)
+            self.layout.addWidget(self.action_knopfi)
+            self.button_group = QtWidgets.QButtonGroup(self)   
+            self.setLayout(self.layout)
+        elif mode == "int_ext":
+            label_text = f"{cat} Standby"
+            self.action_knopfi = QtWidgets.QPushButton(label_text)
+            self.action_knopfi.setStyleSheet(style)
+            self.action_knopfi.setCheckable(True)
+            self.action_knopfi.setChecked(False)
+            self.base_style = style or "font-size: 14px; color: white;"
+            self.action_knopfi.setFixedWidth(356)
+            self.action_knopfi.toggled.connect(self.KOMMANDOOO)
+            self.layout.addWidget(self.action_knopfi)
+            self.button_group = QtWidgets.QButtonGroup(self)   
+            self.setLayout(self.layout)
+        elif mode == "nrf_xbee":
+            label_text = f"{cat} Standby"
+            self.action_knopfi = QtWidgets.QPushButton(label_text)
+            self.action_knopfi.setStyleSheet(style)
+            self.action_knopfi.setCheckable(True)
+            self.action_knopfi.setChecked(False)
+            self.base_style = style or "font-size: 14px; color: white;"
+            self.action_knopfi.setFixedWidth(356)
+            self.action_knopfi.toggled.connect(self.KOMMANDOOO)
+            self.layout.addWidget(self.action_knopfi)
+            self.button_group = QtWidgets.QButtonGroup(self)   
+            self.setLayout(self.layout)
+        else:
+            label_text = f"{cat}"
+            self.action_knopfi = QtWidgets.QPushButton(label_text)
+            self.action_knopfi.setStyleSheet(style)
+            self.action_knopfi.setCheckable(False)
+            self.base_style = style
+            self.action_knopfi.setFixedWidth(356)
+            self.action_knopfi.clicked.connect(self.KOMMANDOOO)
+            self.layout.addWidget(self.action_knopfi)
+            self.button_group = QtWidgets.QButtonGroup(self)   
+            self.setLayout(self.layout)
+
+    def KOMMANDOOO(self, checked = False):
+        #print(self.action_knopfi.width())
+        self.befehl = "goy_cat"
+        if self.mode == "redgreen":
+            color = "#e74c3c" if checked else "#5eaea3"
+            text = str(self.cat + " OFF") if checked else str(self.cat + " ON")
+            self.action_knopfi.setStyleSheet(f"{self.base_style} background-color: {color};")
+            self.action_knopfi.setText(text)
+            if not checked:
+                self.befehl = str(self.command + " 1")
+            if checked:
+                self.befehl = str(self.command + " 0")
+        elif self.mode == "int_ext":
+            color = "#4C7973"
+            text = str(self.cat + " EXTERNAL") if checked else str(self.cat + " INTERNAL")
+            self.action_knopfi.setStyleSheet(f"{self.base_style} background-color: {color};")
+            self.action_knopfi.setText(text)
+            if not checked:
+                self.befehl = str(self.command + " internal")
+            if checked:
+                self.befehl = str(self.command + " external")
+        elif self.mode == "nrf_xbee":
+            color = "#4C7973"
+            text = str(self.cat + " NRF") if checked else str(self.cat + " XBEE")
+            self.action_knopfi.setStyleSheet(f"{self.base_style} background-color: {color};")
+            self.action_knopfi.setText(text)
+            if not checked:
+                self.befehl = str(self.command + " NRF")
+            if checked:
+                self.befehl = str(self.command + " XBEE")
+        else:
+            self.befehl = self.command
+        if not self.befehl:
+            print("Kein Befehl definiert, sende nichts")
+            return
+        try:
+            port = self.port
+            if port is None:
+                print("Kein offener Hafen, wird geöffnet...")
+                port = serial.Serial(self.port, 9600, timeout = 1)
+            if port.is_open:
+                port.write((self.befehl + "\n").encode())
+                print("Kommando gegeben o7", self.befehl)
+        except Exception as e:
+            print("Fehler beim Senden:", e)
+
+class InputActionButton(QtWidgets.QDialog):
+    def __init__(self, cat = None, command = None, style = None, port = None, size = None, isserious = True):    # cat: Kategorie, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
+        super().__init__()
+        #### Breite der Knöpfe: 356 px
+        self.size = size
+        self.isserious = isserious
+        self.cat = cat
+        self.command = command
+        self.port = port
+        self.style = style
+        self.layout = QtWidgets.QHBoxLayout()
+        self.label = QtWidgets.QLabel(self.cat)
+        self.label.setStyleSheet(self.style + "; font-weight: bold;")
+        self.label.setAlignment(QtCore.Qt.AlignCenter)
+        self.label.setFixedSize(int(0.6 * self.size[0]), self.size[1])
+
+        self.line = QtWidgets.QLineEdit()
+        self.line.setFixedSize(int(0.2 * self.size[0]), self.size[1])
+        self.line.setStyleSheet(self.style + "; background-color: #4C7973; border: none; padding: 0px")
+        
+        senden = "➥" if self.isserious else "💅➥"
+        self.btn = QtWidgets.QPushButton(senden)
+        self.btn.setFixedSize(int(0.2 * self.size[0]), self.size[1])
+        self.btn.setStyleSheet(self.style + "; font-weight: bold;")
+
+        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.line)
+        self.layout.addWidget(self.btn)
+        self.setFixedWidth(356)
+        self.setLayout(self.layout)
+
+        self.btn.clicked.connect(self.instantNudeln)
+        self.line.returnPressed.connect(self.instantNudeln)
+    def instantNudeln(self):
+        eingegebener_wert = self.line.text().strip()
+        if eingegebener_wert == "":
+            print("dann sag doch was!!")
+            return
+        befehl = f"{self.command} {eingegebener_wert}"
+        try:
+            port = self.port
+            if port is None:
+                print("kein Hafen verfügbar")
+                return
+            if port.is_open:
+                port.write((befehl + "\n").encode())
+                print("Kommando gegeben o7 ", befehl)
+            else:
+                print("Nö")
+        except Exception as e:
+            print("Fehler beim Senden: ", e)
+
+class WertAnzeigen(QtWidgets.QWidget): # Dient zur Anzeige von (variablen) Werten ohne zeitlichen Verlauf
+    def __init__(self):
+        super().__init__()
+        self.layout = QtWidgets.QVBoxLayout()
+        self.label = QtWidgets.QLabel()
+        self.layout.addWidget(self.label)
+        self.setLayout(self.layout)
+
+    def update_value(self, variable_name, value=0, unit="[ ]"): # Aktualisiert die Anzeige eines Wertes
+        self.label.setText(f"{variable_name}:\n{value}{unit}")
+
+class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der flight data
+    def __init__(self):
+        super().__init__()
+
+        self.isserious = False
+
+        # ALLGEMEINES...........................................................................
+        self.setWindowTitle("ATHMO DataVisualizer")
+        
+        # Fenstericon setzen
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        if self.isserious:
+            icon_path = os.path.join(base_dir, "Logo_A_transelol.ICO")
+        else:
+            icon_path = os.path.join(base_dir, "JoharnesSchnitt.jpg.jpg.ICO")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QtGui.QIcon(icon_path))
+        
+
+        self.port = serial.Serial("COM5", 9600, timeout = 1)
+        self.reader = None
+
+        main_widget = QtWidgets.QWidget()
+        self.layout = QtWidgets.QGridLayout()
+        self.setStyleSheet("background-color: rgb(30, 30, 30)")
+        self.title_label = QtWidgets.QLabel("ATHMO GroundStation")
+        self.title_label.setStyleSheet("font-size: 24px; color: white; padding: 10px;")
+        self.layout.addWidget(self.title_label, 0, 1, QtCore.Qt.AlignCenter)
+        self.logo_label = QtWidgets.QLabel()
+
+        # Logo einpflegen
+        if not self.isserious:
+            logo_path = os.path.join(base_dir, "Logo_Original_transparent_Maggus.PNG")
+        else:
+            logo_path = os.path.join(base_dir, "Logo_Original_transparent.PNG")
+        if os.path.isfile(logo_path):
+            pix = QtGui.QPixmap(logo_path)
+            if not pix.isNull():
+                self.logo_label.setPixmap(pix.scaled(400, 400, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        self.logo_label.setStyleSheet("padding: 10px;")
+        self.layout.addWidget(self.logo_label, 0, 0, QtCore.Qt.AlignLeft)
+
+        myappid = 'hehehe.hihihi.hohoho'
+        ctype.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+
+        # GRAPHEN...............................................................................
+        self.DatGibtNeAnzeige()
+        
+        # Formatierung der Graphen:
+        self.plot_style = {"color": "#5eaea3", "width": 1.5}
+        self.plot_style_alarrm = {"color": "red", "width": 1.5}
+
+        # KNOPFIS...............................................................................
+        # Start/Stop-Widget hinzufügen
+        startknopfistyle = "font-size: 18px; color: white; background-color: #5eaea3;"
+        self.startstop_widget = StartKnopfi(startknopfistyle)
+        self.layout.addWidget(self.startstop_widget, 2, 0)       
+
+        # -----------aktuelle Commands--------------
+        # cls: Clears screen                                                                                    für GS nicht relevant
+        # switchCLIMode <mode>: Switches the CLI mode (internal/external)                                       j
+        # switchSerialData <1/0>: Switches the Serial Plotter data stream (on/off)                              j
+        # switchGroundData <1/0>: Switches the Ground Station data stream (on/off)                              j
+        # ...
+        # RESET_PRIMARY: Resets the Primary MCU on the flight computer                                          
+        # RESET_SECONDARY: Resets the Secondary MCU on the flight computer                                      
+        # ...
+        # Camera_Power <1/0>: Turns the camera power on or off                                                  j
+        # Camera_Recording <1/0>: Turns the camera recording on or off                                          j   
+        # Camera_SkipDate: Skips the current date for the camera                                                j
+        # Camera_Wifi <1/0>: Turns the camera WiFi on or off                                                    j
+        # ...
+        # State_Force <x>: Force the Statemachine into state x                                                  j
+        # SimulateEvent <event>: Simulate state machine event <event>                                           j
+        # Logging_FlightDataOut <Enable/Disable>: Enables or disables flight data output logging to PC          j
+        # ...
+        # SPARK_SetAngle <float>: Sets target angle of the stepper motor                                        j
+        # SPARK_SetSpeed <float>: Sets target speed of the stepper motor                                        j
+        # SPARK_ExitMode: Exits the current target mode                                                         j
+        # SPARK_ZeroStepper: Finds minimum position of Stepper                                                  j
+        # SPARK_FindMax: Finds maximum position of Stepper                                                      j        
+        # SPARK_TargetPositionMode: SPARK enters Target Position mode                                           j
+        # SPARK_TargetSpeedMode: SPARK enters Target Speed mode                                                 j
+        # ...
+        # PU_setCAMPower <1/0>: toggles Camera power                                                            j                                   
+        # PU_setRecoveryPower <1/0>: toggles Recovery power                                                     j
+        # PU_setACSPower <1/0>: toggles ACS power                                                               j
+        # ...
+        # Buzzer_PlayNote <Note> <duration>: Plays Note from C0 to B8                                           j
+        # Buzzer_PlaySong <Song>: Plays Song from Playlist                                                      j
+        # Buzzer_PlaySongRepeat <Song> <Period>: Plays Song from Playlist on repeat each period                 j
+        # Buzzer_Stop: Stops annoying buzzing activities                                                        j
+        # ...
+        # Set_HIL <1/0>: Enables or disables Hardware In the Loop (HIL) simulation                              j
+        # Radio_Switch <NRF/XBEE>: Switch primary radio to specified radio module                               j
+
+        self.button_height = 37
+        button_width = 356
+        self.size = (button_width, self.button_height)
+        knopfistyle = "font-size: 14px; color: white; background-color: #5eaea3;"
+
+        # PANELS +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+++-+-+-+--+-+-+-+-+-+-+
+        gruppenkostuem = "font-size: 18px; color: white; background-color: #414141; font-weight: bold; padding: 10px"
+
+        # KAMERAPanel -----------------------------
+        cam_pow_widget      =  ActionButton("Camera Power",     "Camera_Power",      knopfistyle, self.port, "redgreen")
+        cam_rec_widget      =  ActionButton("Camera Recording", "Camera_Recording",  knopfistyle, self.port, "redgreen")
+        cam_skipdate_widget =  ActionButton("Skip date",        "Camera_SkipDate",   knopfistyle, self.port            )
+        cam_wifi_widget     =  ActionButton("Camera WiFi",      "Camera_Wifi",       knopfistyle, self.port, "redgreen")
+
+        self.CAM_control = QtWidgets.QGroupBox()
+        self.CAM_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.CAM_control.setTitle("Camera Control")
+        CAM_control_layout = QtWidgets.QVBoxLayout()
+        CAM_control_layout.addWidget(cam_pow_widget)
+        CAM_control_layout.addWidget(cam_rec_widget)
+        CAM_control_layout.addWidget(cam_skipdate_widget)
+        CAM_control_layout.addWidget(cam_wifi_widget)
+        self.CAM_control.setLayout(CAM_control_layout)
+        #self.layout.addWidget(self.CAM_control, 3, 0)
+
+        CAM_control_tool = QtWidgets.QToolButton()
+        CAM_control_tool.setText("Camera Control ▼")
+        CAM_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        CAM_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        CAM_menu = QtWidgets.QMenu(CAM_control_tool)
+        wa = QtWidgets.QWidgetAction(CAM_menu)
+        wa.setDefaultWidget(self.CAM_control)
+        CAM_menu.addAction(wa)
+        CAM_control_tool.setMenu(CAM_menu)
+
+        #self.layout.addWidget(CAM_control_tool, 3, 0)
+
+        # RESETPanel -----------------------------
+        reset_primary_widget   = ActionButton("Reset Primary",   "RESET_PRIMARY",   knopfistyle, self.port)
+        reset_secondary_widget = ActionButton("Reset Secondary", "RESET_SECONDARY", knopfistyle, self.port)
+
+        self.RESET_control = QtWidgets.QGroupBox()
+        self.RESET_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.RESET_control.setTitle("Reset Control")
+        RESET_control_layout = QtWidgets.QVBoxLayout()
+        RESET_control_layout.addWidget(reset_primary_widget)
+        RESET_control_layout.addWidget(reset_secondary_widget)
+        self.RESET_control.setLayout(RESET_control_layout)
+        #self.layout.addWidget(self.RESET_control, 3, 3)
+
+        # DATAPanel -----------------------------
+        cli_mode_widget       = ActionButton("CLI Mode",        "switchCLIMode",      knopfistyle, self.port, "int_ext")
+        serialdata_widget     = ActionButton("Serial Data",     "switchSerialData",   knopfistyle, self.port, "redgreen")
+        grounddata_widget     = ActionButton("Ground Data",     "switchGroundData",   knopfistyle, self.port, "redgreen")
+
+        self.Data_control = QtWidgets.QGroupBox()
+        self.Data_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.Data_control.setTitle("Data Control")
+        Data_control_layout = QtWidgets.QVBoxLayout()
+        Data_control_layout.addWidget(cli_mode_widget)
+        Data_control_layout.addWidget(serialdata_widget)
+        Data_control_layout.addWidget(grounddata_widget)
+        self.Data_control.setLayout(Data_control_layout)
+        #self.layout.addWidget(self.Data_control, 4, 0)
+
+        Data_control_tool = QtWidgets.QToolButton()
+        Data_control_tool.setText("Data/ Mode Control ▼")
+        Data_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        Data_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        Data_menu = QtWidgets.QMenu(Data_control_tool)
+        wa = QtWidgets.QWidgetAction(Data_menu)
+        wa.setDefaultWidget(self.Data_control)
+        Data_menu.addAction(wa)
+        Data_control_tool.setMenu(Data_menu)
+
+        #self.layout.addWidget(Data_control_tool, 4, 0)
+
+
+        # SPARKPanel ---------------------------
+        spark_setangle_widget = InputActionButton("Set Angle", "SPARK_SetAngle", knopfistyle, self.port, self.size, self.isserious)
+        spark_setspeed_widget = InputActionButton("Set Speed", "SPARK_SetSpeed", knopfistyle, self.port, self.size, self.isserious)
+        spark_exitmode_widget  = ActionButton("Exit Mode", "SPARK_ExitMode", knopfistyle, self.port)
+        spark_zerostepper_widget = ActionButton("Zero Stepper", "SPARK_ZeroStepper", knopfistyle, self.port)
+        spark_findmax_widget    = ActionButton("Find Max", "SPARK_FindMax", knopfistyle, self.port)
+        spark_targetpositionmode_widget = ActionButton("Target Position Mode", "SPARK_TargetPositionMode", knopfistyle, self.port)
+        spark_targetspeedmode_widget    = ActionButton("Target Speed Mode", "SPARK_TargetSpeedMode", knopfistyle, self.port)
+
+        self.SPARK_control = QtWidgets.QGroupBox()
+        self.SPARK_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.SPARK_control.setTitle("SPARK Control")
+        SPARK_control_layout = QtWidgets.QVBoxLayout()
+        SPARK_control_layout.addWidget(spark_setangle_widget)
+        SPARK_control_layout.addWidget(spark_setspeed_widget)
+        SPARK_control_layout.addWidget(spark_exitmode_widget)
+        SPARK_control_layout.addWidget(spark_zerostepper_widget)
+        SPARK_control_layout.addWidget(spark_findmax_widget)
+        SPARK_control_layout.addWidget(spark_targetpositionmode_widget)
+        SPARK_control_layout.addWidget(spark_targetspeedmode_widget)
+        self.SPARK_control.setLayout(SPARK_control_layout)
+        #self.layout.addWidget(self.SPARK_control, 3, 3)
+
+        SPARK_control_tool = QtWidgets.QToolButton()
+        SPARK_control_tool.setText("SPARK Control ▼")
+        SPARK_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        SPARK_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        SPARK_menu = QtWidgets.QMenu(SPARK_control_tool)
+        wa = QtWidgets.QWidgetAction(SPARK_menu)
+        wa.setDefaultWidget(self.SPARK_control)
+        SPARK_menu.addAction(wa)
+        SPARK_control_tool.setMenu(SPARK_menu)
+
+        #self.layout.addWidget(SPARK_control_tool, 3, 3)
+
+
+        # PUPanel -----------------------------
+        pu_setcam_widget      = ActionButton("Camera Power",   "PU_setCAMPower",      knopfistyle, self.port, "redgreen")
+        pu_setrecovery_widget = ActionButton("Recovery Power", "PU_setRecoveryPower", knopfistyle, self.port, "redgreen")
+        pu_setacs_widget      = ActionButton("ACS Power",      "PU_setACSPower",      knopfistyle, self.port, "redgreen")
+
+        self.PU_control = QtWidgets.QGroupBox()
+        self.PU_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.PU_control.setTitle("Power Unit Control")
+        PU_control_layout = QtWidgets.QVBoxLayout()
+        PU_control_layout.addWidget(pu_setcam_widget)
+        PU_control_layout.addWidget(pu_setrecovery_widget)
+        PU_control_layout.addWidget(pu_setacs_widget)
+        self.PU_control.setLayout(PU_control_layout)
+        #self.layout.addWidget(self.PU_control, 4, 3)
+
+        PU_control_tool = QtWidgets.QToolButton()
+        PU_control_tool.setText("Power Unit Control ▼")
+        PU_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        PU_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        PU_menu = QtWidgets.QMenu(PU_control_tool)
+        wa = QtWidgets.QWidgetAction(PU_menu)
+        wa.setDefaultWidget(self.PU_control)
+        PU_menu.addAction(wa)
+        PU_control_tool.setMenu(PU_menu)
+
+        #self.layout.addWidget(PU_control_tool, 4, 3)
+
+
+        # SOUNDPanel ----------------------------
+        sound_playcnote_widget       = ActionButton("Play C4", "Buzzer_PlayNote C4 150", knopfistyle, self.port)
+        sound_playnote_widget = InputActionButton("Play Note", "Buzzer_PlayNote", knopfistyle, self.port, self.size, self.isserious)
+        sound_playsong_widget       = InputActionButton("Play Song", "Buzzer_PlaySong", knopfistyle, self.port, self.size, self.isserious)
+        sound_playsongrepeat_widget = InputActionButton("Play Song Repeat", "Buzzer_PlaySongRepeat", knopfistyle, self.port, self.size, self.isserious)
+        sound_stop_widget          = ActionButton("SEI LEISE", "Buzzer_Stop", knopfistyle, self.port)
+
+        self.SOUND_control = QtWidgets.QGroupBox()
+        self.SOUND_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.SOUND_control.setTitle("Sound Control")
+        SOUND_control_layout = QtWidgets.QVBoxLayout()
+        SOUND_control_layout.addWidget(sound_playcnote_widget)
+        SOUND_control_layout.addWidget(sound_playnote_widget)
+        SOUND_control_layout.addWidget(sound_playsong_widget)
+        SOUND_control_layout.addWidget(sound_playsongrepeat_widget)
+        SOUND_control_layout.addWidget(sound_stop_widget)
+    
+        self.SOUND_control.setLayout(SOUND_control_layout)
+        #self.layout.addWidget(self.SOUND_control, 4, 1)
+
+        SOUND_control_tool = QtWidgets.QToolButton()
+        SOUND_control_tool.setText("Sound Control ▼")
+        SOUND_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        SOUND_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        SOUND_menu = QtWidgets.QMenu(SOUND_control_tool)
+        wa = QtWidgets.QWidgetAction(SOUND_menu)
+        wa.setDefaultWidget(self.SOUND_control)
+        SOUND_menu.addAction(wa)
+        SOUND_control_tool.setMenu(SOUND_menu)
+
+        #self.layout.addWidget(SOUND_control_tool, 5, 0)
+
+        # SONSTIGESPanel----------------------------
+        stateforce_widget = InputActionButton("Force State", "State_Force", knopfistyle, self.port, self.size, self.isserious)
+        simulateevent_widget = InputActionButton("Simulate Event", "SimulateEvent", knopfistyle, self.port, self.size, self.isserious)
+        loggingflightdataout_widget = ActionButton("Logging Flight Data Out", "Logging_FlightDataOut", knopfistyle, self.port, "redgreen")
+        set_hil_widget = ActionButton("Set HIL", "Set_HIL", knopfistyle, self.port, "redgreen")
+        radioswitch_widget = ActionButton("Radio Switch", "Radio_Switch", knopfistyle, self.port, "nrf_xbee")
+
+        self.OTHER_control = QtWidgets.QGroupBox()
+        self.OTHER_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        #self.OTHER_control.setTitle("Other Control")
+        OTHER_control_layout = QtWidgets.QVBoxLayout()
+        OTHER_control_layout.addWidget(stateforce_widget)
+        OTHER_control_layout.addWidget(simulateevent_widget)
+        OTHER_control_layout.addWidget(loggingflightdataout_widget)
+        OTHER_control_layout.addWidget(set_hil_widget)
+        OTHER_control_layout.addWidget(radioswitch_widget)
+        self.OTHER_control.setLayout(OTHER_control_layout)
+        #self.layout.addWidget(self.OTHER_control, 5, 1)
+
+        OTHER_control_tool = QtWidgets.QToolButton()
+        OTHER_control_tool.setText("Other Control ▼")
+        OTHER_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        OTHER_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+
+        OTHER_menu = QtWidgets.QMenu(OTHER_control_tool)
+        wa = QtWidgets.QWidgetAction(OTHER_menu)
+        wa.setDefaultWidget(self.OTHER_control)
+        OTHER_menu.addAction(wa)
+        OTHER_control_tool.setMenu(OTHER_menu)
+
+        #self.layout.addWidget(OTHER_control_tool, 5, 1)
+
+        # ZUSAMMENFASSENDESPanel-------------------------#
+        self.TOTAL_control = QtWidgets.QGroupBox()
+        self.TOTAL_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        total_control_layout = QtWidgets.QGridLayout()
+        total_control_layout.addWidget(CAM_control_tool,    1, 0)
+        total_control_layout.addWidget(Data_control_tool,   0, 1)
+        total_control_layout.addWidget(SPARK_control_tool,  1, 1)
+        total_control_layout.addWidget(PU_control_tool,     0, 0)
+        total_control_layout.addWidget(SOUND_control_tool,  2, 0)
+        total_control_layout.addWidget(OTHER_control_tool,  2, 1)
+
+        self.TOTAL_control.setLayout(total_control_layout)
+        self.layout.addWidget(self.TOTAL_control, 3, 0)
+
+        # HAUPTFENSTER..........................................................................
+        main_widget.setLayout(self.layout)
+        self.setCentralWidget(main_widget)
+
+        # EINLESEN..............................................................................
+        self.timelimit_1 = 5 # maximales Zeitfenster [s] für Batt.Spannung, anderes unwichtiges Zeugs
+        self.timelimit_2 = 20 # maximales Zeitfenster [s] für minimal relevante Sachen
+        self.timelimit_3 = 60 # maximales Zeitfenster [s] für das einzig wichtige - die Flugbahn (keine Garantie)
+        self.reader = None
+        #self.COM_widget.port_changed.connect(self.change_port)
+
+        self.startstop_widget.AN_knopfi.clicked.connect(self.start_reader)
+        self.startstop_widget.AUS_knopfi.clicked.connect(self.stop_reader)
+        # ......................................................................................
+    
+
+    def init_reader(self):
+        if hasattr(self, "reader") and self.reader is not None:
+            self.reader.stop()
+        if not self.port:
+            self.reader = None
+            return
+        self.reader = SignalLeseGerät(self.port)
+        self.reader.werte_signal.connect(self.Werte_add)
+        self.reader.header_signal.connect(self.Header_add)
+
+    def start_reader(self):
+        if self.reader is None:
+            self.init_reader()
+            self.reader.header_signal.connect(self.Header_add)
+            self.reader.werte_signal.connect(self.Werte_add)
+            self.reader.start()
+        if not self.reader.isRunning():
+            self.reader.start()
+    def stop_reader(self):
+        if self.reader and self.reader.isRunning():
+            self.reader.stop()
+
+    def change_port(self, port_name):
+        self.stop_reader()
+        if self.port is not None:
+            try:
+                self.port.close()
+            except Exception:
+                pass
+        try:
+            self.port = serial.Serial(port_name, 9600, timeout = 1)
+        except Exception as e:
+            self.port = None
+
+    def Header_add(self, header):
+        self.header = header
+        for i in range(0, len(self.header)):
+            print("HEADER", i, ":", self.header[i])
+        
+    def Werte_add(self, daten_zeilenweise):        
+        if daten_zeilenweise[0] == 1:   # Status Packet......................................................
+            if not hasattr(self, "status_time"):
+                self.status_time          = []
+                self.status_flags         = []
+                self.sensor_status_flags  = []
+                self.state                = []
+                self.alarrm_ID1 = False
+                
+                
+                self.struktur_ID1, self.scaling_ID1, self.unit_ID1 = self.Datenstruktur(1)
+            
+            if len(daten_zeilenweise) < 12:
+                len(daten_zeilenweise) == daten_zeilenweise + ["0"] * (12-len(daten_zeilenweise))
+
+            try:
+                status_time             = float(daten_zeilenweise[1]) * self.scaling_ID1[1]
+                status_flags         = float(daten_zeilenweise[2]) * self.scaling_ID1[2]
+                sensor_status_flags  = float(daten_zeilenweise[3]) * self.scaling_ID1[3]
+                state                = float(daten_zeilenweise[4]) * self.scaling_ID1[4]
+                self.alarrm_id4 = False
+            except ValueError:
+                self.alarrm_ID1 = True
+                print("ungültiger Wert in Datenpaket ID1")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                status_time             = self.status_time[-1] if self.status_time else 0.0
+                status_flags         = self.status_flags[-1] if self.status_flags else 0.0
+                sensor_status_flags  = self.sensor_status_flags[-1] if self.sensor_status_flags else 0.0
+                state                = self.state[-1] if self.state else 0.0
+
+            self.imu_time.append(status_time)
+            self.status_flags.append(status_flags)
+            self.sensor_status_flags.append(sensor_status_flags)
+            self.state.append(state)
+
+            self.maxtime_ID1 = self.timelimit_1
+            if len(self.status_time) > 1:
+                while self.status_time[-1] - self.status_time[0] > self.maxtime_ID1:
+                    if not self.alarrm_id4:
+                        self.status_time.pop(0)
+                        self.status_flags.pop(0)
+                        self.sensor_status_flags.pop(0)
+                        self.state.pop(0)
+
+            if self.view_statusflag:
+                if self.alarrm_ID1:
+                    self.graph_1_1_widget.setData(self.status_time, self.status_flags, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_1_1_widget.curve.setData(self.status_time, self.status_flags, pen=pg.mkPen(**self.plot_style))
+                self.graph_1_1_widget.canvas.setTitle(self.struktur_ID1[2], color = "w")
+                self.graph_1_1_widget.canvas.setLabel("left", self.unit_ID1[2], color = "w")
+            if self.view_sensorstatusflags:
+                if self.alarrm_ID1:
+                    self.graph_1_2_widget.setData(self.status_time, self.sensor_status_flags, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_1_2_widget.curve.setData(self.status_time, self.sensor_status_flags, pen=pg.mkPen(**self.plot_style))
+                self.graph_1_2_widget.canvas.setTitle(self.struktur_ID1[3], color = "w")
+                self.graph_1_2_widget.canvas.setLabel("left", self.unit_ID1[3], color = "w")
+            if self.view_state:
+                if self.alarrm_ID1:
+                    self.graph_1_3_widget.setData(self.status_time, self.state, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_1_3_widget.curve.setData(self.status_time, self.state, pen=pg.mkPen(**self.plot_style))
+                self.graph_1_3_widget.canvas.setTitle(self.struktur_ID1[4], color = "w")
+                self.graph_1_3_widget.canvas.setLabel("left", self.unit_ID1[4], color = "w")
+            
+            # ALTERNATIVE DARSTELLUNG ALS EINZELWERT: [muss noch eingepflegt werden]
+            
+        if daten_zeilenweise[0] == 2:   # Power Packet.......................................................
+            if not hasattr(self, "power_time"):
+                self.power_time           = []
+                self.M1_5V_bus            = []
+                self.M1_BAT_bus           = []
+                self.unused1              = []
+                self.M2_bus_5V            = []
+                self.M2_bus_GPA_bat       = []
+                self.unused2              = []
+                self.PU_pow               = []
+                self.PU_curr              = []
+                self.PU_bat_bus           = []
+                self.unused3              = []
+                
+                self.struktur_ID2, self.scaling_ID2, self.unit_ID2 = self.Datenstruktur(2)
+            
+            try:
+                self.power_time.append(float(daten_zeilenweise[1])*self.scaling_ID2[1])
+                self.M1_5V_bus.append(float(daten_zeilenweise[2])*self.scaling_ID2[2])
+                self.M1_BAT_bus.append(float(daten_zeilenweise[3])*self.scaling_ID2[3])
+                self.unused1.append(float(daten_zeilenweise[4])*self.scaling_ID2[4])
+                self.M2_bus_5V.append(float(daten_zeilenweise[5])*self.scaling_ID2[5])
+                self.M2_bus_GPA_bat.append(float(daten_zeilenweise[6])*self.scaling_ID2[6])
+                self.unused2.append(float(daten_zeilenweise[7])*self.scaling_ID2[7])
+                self.PU_pow.append(float(daten_zeilenweise[8])*self.scaling_ID2[8])
+                self.PU_curr.append(float(daten_zeilenweise[9])*self.scaling_ID2[9])
+                self.PU_bat_bus.append(float(daten_zeilenweise[10])*self.scaling_ID2[10])
+                self.unused3.append(float(daten_zeilenweise[11])*self.scaling_ID2[11])
+            except ValueError:
+                print("ungültiger Wert in Datenpaket ID2")
+
+            self.maxtime_ID2 = self.timelimit_1
+            if len(self.power_time) > 1:
+                while self.power_time[-1] - self.power_time[0] > self.maxtime_ID2:
+                    self.power_time.pop(0)
+                    self.M1_5V_bus.pop(0)
+                    self.M1_BAT_bus.pop(0)
+                    self.unused1.pop(0)
+                    self.M2_bus_5V.pop(0)
+                    self.M2_bus_GPA_bat.pop(0)
+                    self.unused2.pop(0)
+                    self.PU_pow.pop(0)
+                    self.PU_curr.pop(0)
+                    self.PU_bat_bus.pop(0)
+                    self.unused3.pop(0)
+                    # EINPFLEGEN IN GRAPH FEHLT NOCH
+       
+        if daten_zeilenweise[0] == 3:   # GPS Packet.........................................................
+            if not hasattr(self, "gps_time"):
+                self.gps_time              = []
+                self.latitude              = []
+                self.longitude             = []
+                self.altitude              = []
+                self.speed                 = []
+                self.course                = []
+                self.unused1               = []
+                self.unused2               = []
+                self.unused3               = []
+                self.unused4               = []
+                self.unused5               = []
+                
+                self.struktur_ID3, self.scaling_ID3, self.unit_ID3 = self.Datenstruktur(3)
+            
+            try:
+                self.gps_time.append(float(daten_zeilenweise[1])*self.scaling_ID3[1])
+                self.latitude.append(float(daten_zeilenweise[2])*self.scaling_ID3[2])
+                self.longitude.append(float(daten_zeilenweise[3])*self.scaling_ID3[3])
+                self.altitude.append(float(daten_zeilenweise[4])*self.scaling_ID3[4])
+                self.speed.append(float(daten_zeilenweise[5])*self.scaling_ID3[5])
+                self.course.append(float(daten_zeilenweise[6])*self.scaling_ID3[6])
+                self.unused1.append(float(daten_zeilenweise[7])*self.scaling_ID3[7])
+                self.unused2.append(float(daten_zeilenweise[8])*self.scaling_ID3[8])
+                self.unused3.append(float(daten_zeilenweise[9])*self.scaling_ID3[9])
+                self.unused4.append(float(daten_zeilenweise[10])*self.scaling_ID3[10])
+                self.unused5.append(float(daten_zeilenweise[11])*self.scaling_ID3[11])
+            except ValueError:
+                print("ungültiger Wert in Datenpaket ID3")
+
+            self.maxtime_ID3 = self.timelimit_3
+            if len(self.gps_time) > 1:
+                while self.gps_time[-1] - self.gps_time[0] > self.maxtime_ID3:
+                    self.gps_time.pop(0)
+                    self.latitude.pop(0)
+                    self.longitude.pop(0)
+                    self.altitude.pop(0)
+                    self.speed.pop(0)
+                    self.course.pop(0)
+                    self.unused1.pop(0)
+                    self.unused2.pop(0)
+                    self.unused3.pop(0)
+                    self.unused4.pop(0)
+                    self.unused5.pop(0)
+                    # EINPFLEGEN IN GRAPH FEHLT NOCH
+       
+        if daten_zeilenweise[0] == 4:   # IMU Packet.........................................................   
+            if not hasattr(self, "imu_time"):
+                self.imu_time              = []
+                self.IMU1_x_accel          = []
+                self.IMU1_y_accel          = []
+                self.IMU1_z_accel          = []
+                self.IMU1_x_gyro           = []
+                self.IMU1_y_gyro           = []
+                self.IMU1_z_gyro           = []
+                self.magX                  = []
+                self.magY                  = []
+                self.magZ                  = []
+                self.unused_id4            = []
+                self.alarrm_id4            = False
+                self.struktur_ID4, self.scaling_ID4, self.unit_ID4 = self.Datenstruktur(4)
+
+            if len(daten_zeilenweise) < 12:
+                daten_zeilenweise = daten_zeilenweise + ['0'] * (12 - len(daten_zeilenweise))
+
+            try:
+                imu_time      = float(daten_zeilenweise[1]) * self.scaling_ID4[1]
+                IMU1_x_accel  = float(daten_zeilenweise[2]) * self.scaling_ID4[2]
+                IMU1_y_accel  = float(daten_zeilenweise[3]) * self.scaling_ID4[3]
+                IMU1_z_accel  = float(daten_zeilenweise[4]) * self.scaling_ID4[4]
+                IMU1_x_gyro   = float(daten_zeilenweise[5]) * self.scaling_ID4[5]
+                IMU1_y_gyro   = float(daten_zeilenweise[6]) * self.scaling_ID4[6]
+                IMU1_z_gyro   = float(daten_zeilenweise[7]) * self.scaling_ID4[7]
+                magX          = float(daten_zeilenweise[8]) * self.scaling_ID4[8]
+                magY          = float(daten_zeilenweise[9]) * self.scaling_ID4[9]
+                magZ          = float(daten_zeilenweise[10]) * self.scaling_ID4[10]
+                unused_id4    = float(daten_zeilenweise[11]) * self.scaling_ID4[11]
+                self.alarrm_id4 = False
+            except ValueError:
+                self.alarrm_id4 = True
+                print("ungültiger Wert in Datenpaket ID4")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                imu_time      = self.imu_time[-1] if self.imu_time else 0.0
+                IMU1_x_accel  = self.IMU1_x_accel[-1] if self.IMU1_x_accel else 0.0
+                IMU1_y_accel  = self.IMU1_y_accel[-1] if self.IMU1_y_accel else 0.0
+                IMU1_z_accel  = self.IMU1_z_accel[-1] if self.IMU1_z_accel else 0.0
+                IMU1_x_gyro   = self.IMU1_x_gyro[-1] if self.IMU1_x_gyro else 0.0
+                IMU1_y_gyro   = self.IMU1_y_gyro[-1] if self.IMU1_y_gyro else 0.0
+                IMU1_z_gyro   = self.IMU1_z_gyro[-1] if self.IMU1_z_gyro else 0.0
+                magX          = self.magX[-1] if self.magX else 0.0
+                magY          = self.magY[-1] if self.magY else 0.0
+                magZ          = self.magZ[-1] if self.magZ else 0.0
+                unused_id4    = self.unused_id4[-1] if self.unused_id4 else 0.0
+
+            self.imu_time.append(imu_time)
+            self.IMU1_x_accel.append(IMU1_x_accel)
+            self.IMU1_y_accel.append(IMU1_y_accel)
+            self.IMU1_z_accel.append(IMU1_z_accel)
+            self.IMU1_x_gyro.append(IMU1_x_gyro)
+            self.IMU1_y_gyro.append(IMU1_y_gyro)
+            self.IMU1_z_gyro.append(IMU1_z_gyro)
+            self.magX.append(magX)
+            self.magY.append(magY)
+            self.magZ.append(magZ)
+            self.unused_id4.append(unused_id4)
+
+            self.maxtime_ID4 = self.timelimit_1
+            if len(self.imu_time) > 1:
+                while self.imu_time[-1] - self.imu_time[0] > self.maxtime_ID4:
+                    if not self.alarrm_id4:
+                        self.imu_time.pop(0)
+                        self.IMU1_x_accel.pop(0)
+                        self.IMU1_y_accel.pop(0)
+                        self.IMU1_z_accel.pop(0)
+                        self.IMU1_x_gyro.pop(0)
+                        self.IMU1_y_gyro.pop(0)
+                        self.IMU1_z_gyro.pop(0)
+                        self.magX.pop(0)
+                        self.magY.pop(0)
+                        self.magZ.pop(0)
+                        self.unused_id4.pop(0)
+            
+            if self.view_IMU1_x_accel:
+                if self.alarrm_id4:
+                    self.graph_4_1_widget.setData(self.imu_time, self.IMU1_x_accel, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_1_widget.curve.setData(self.imu_time, self.IMU1_x_accel, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_1_widget.canvas.setTitle(self.struktur_ID4[2], color = "w")
+                self.graph_4_1_widget.canvas.setLabel("left", self.unit_ID4[2], color = "w")
+            if self.view_IMU1_y_accel:  #----------------
+                if self.alarrm_id4:
+                    self.graph_4_2_widget.setData(self.imu_time, self.IMU1_y_accel, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_2_widget.curve.setData(self.imu_time, self.IMU1_y_accel, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_2_widget.canvas.setTitle(self.struktur_ID4[3], color = "w")
+                self.graph_4_2_widget.canvas.setLabel("left", self.unit_ID4[3], color = "w")
+            if self.view_IMU1_z_accel:  #----------------
+                if self.alarrm_id4:
+                    self.graph_4_3_widget.setData(self.imu_time, self.IMU1_z_accel, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_3_widget.curve.setData(self.imu_time, self.IMU1_z_accel, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_3_widget.canvas.setTitle(self.struktur_ID4[4], color = "w")
+                self.graph_4_3_widget.canvas.setLabel("left", self.unit_ID4[4], color = "w")
+            if self.view_IMU1_x_gyro:   #----------------
+                if self.alarrm_id4:
+                    self.graph_4_4_widget.setData(self.imu_time, self.IMU1_x_gyro, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_4_widget.curve.setData(self.imu_time, self.IMU1_x_gyro, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_4_widget.canvas.setTitle(self.struktur_ID4[5], color = "w")
+                self.graph_4_4_widget.canvas.setLabel("left", self.unit_ID4[5], color = "w")
+            if self.view_IMU1_y_gyro:   #----------------
+                if self.alarrm_id4:
+                    self.graph_4_5_widget.setData(self.imu_time, self.IMU1_y_gyro, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_5_widget.curve.setData(self.imu_time, self.IMU1_y_gyro, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_5_widget.canvas.setTitle(self.struktur_ID4[6], color = "w")
+                self.graph_4_5_widget.canvas.setLabel("left", self.unit_ID4[6], color = "w")
+            if self.view_IMU1_z_gyro:  #----------------
+                if self.alarrm_id4:
+                    self.graph_4_6_widget.setData(self.imu_time, self.IMU1_z_gyro, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_6_widget.curve.setData(self.imu_time, self.IMU1_z_gyro, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_6_widget.canvas.setTitle(self.struktur_ID4[7], color = "w")
+                self.graph_4_6_widget.canvas.setLabel("left", self.unit_ID4[7], color = "w")
+            if self.view_magX:      #-------------------
+                if self.alarrm_id4:
+                    self.graph_4_7_widget.setData(self.imu_time, self.magX, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_7_widget.curve.setData(self.imu_time, self.magX, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_7_widget.canvas.setTitle(self.struktur_ID4[8], color = "w")
+                self.graph_4_7_widget.canvas.setLabel("left", self.unit_ID4[8], color = "w")
+            if self.view_magY:      #-------------------
+                if self.alarrm_id4:
+                    self.graph_4_8_widget.setData(self.imu_time, self.magY, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_8_widget.curve.setData(self.imu_time, self.magY, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_8_widget.canvas.setTitle(self.struktur_ID4[9], color = "w")
+                self.graph_4_8_widget.canvas.setLabel("left", self.unit_ID4[9], color = "w")
+            if self.view_magZ:      #-------------------
+                if self.alarrm_id4:
+                    self.graph_4_9_widget.setData(self.imu_time, self.magZ, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_9_widget.curve.setData(self.imu_time, self.magZ, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_9_widget.canvas.setTitle(self.struktur_ID4[10], color = "w")
+                self.graph_4_9_widget.canvas.setLabel("left", self.unit_ID4[10], color = "w")
+            if self.view_unused_id4:#-------------------
+                if self.alarrm_id4:
+                    self.graph_4_10_widget.setData(self.imu_time, self.pos_unused_id4, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_4_10_widget.curve.setData(self.imu_time, self.pos_unused_id4, pen=pg.mkPen(**self.plot_style))
+                self.graph_4_10_widget.canvas.setTitle(self.struktur_ID4[11], color = "w")
+                self.graph_4_10_widget.canvas.setLabel("left", self.unit_ID4[11], color = "w")               
+        
+        if daten_zeilenweise[0] == 5:   # TEMPERATURE Packet..........................................................
+            if not hasattr(self, "temperature_time"):
+                self.temperature_time = []
+                self.M1_DTS =           []
+                self.M1_ADC =           []
+                self.M1_BMP =           []
+                self.M1_IMU1 =          []
+                self.M1_IMU2 =          []
+                self.M1_MAG =           []
+                self.M2_3V3 =           []
+                self.M2_XBee =          []
+                self.PI_Bat =           []
+                self.Pressure =         []
+                self.unused1_id5 =      []
+                self.unused2_id5 =      []
+                self.alarrm_id5 =       False
+                self.struktur_ID5, self.scaling_ID5, self.unit_ID5 = self.Datenstruktur(5)
+
+            if len(daten_zeilenweise) < 12:
+                daten_zeilenweise = daten_zeilenweise + ['0'] * (12 - len(daten_zeilenweise))
+            
+            try:
+                temperature_time = float(daten_zeilenweise[1]) * self.scaling_ID5[1]
+                M1_DTS          = float(daten_zeilenweise[2]) * self.scaling_ID5[2]
+                M1_ADC          = float(daten_zeilenweise[3]) * self.scaling_ID5[3]
+                M1_BMP          = float(daten_zeilenweise[4]) * self.scaling_ID5[4]
+                M1_IMU1         = float(daten_zeilenweise[5]) * self.scaling_ID5[5]
+                M1_IMU2         = float(daten_zeilenweise[6]) * self.scaling_ID5[6]
+                M1_MAG          = float(daten_zeilenweise[7]) * self.scaling_ID5[7]
+                M2_3V3          = float(daten_zeilenweise[8]) * self.scaling_ID5[8]
+                M2_XBee         = float(daten_zeilenweise[9]) * self.scaling_ID5[9]     
+                PI_Bat          = float(daten_zeilenweise[10]) * self.scaling_ID5[10]
+                Pressure        = float(daten_zeilenweise[11]) * self.scaling_ID5[11]
+                unused1_id5    = float(daten_zeilenweise[12]) * self.scaling_ID5[12]
+                unused2_id5    = float(daten_zeilenweise[13]) * self.scaling_ID5[13]
+            except ValueError:
+                self.alarrm_id5 = True
+                print("ungültiger Wert in Datenpaket ID5")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                temperature_time = self.temperature_time[-1] if self.temperature_time else 0.0
+                M1_DTS =           self.M1_DTS[-1] if self.M1_DTS else 0.0
+                M1_ADC =           self.M1_ADC[-1] if self.M1_ADC else 0.0
+                M1_BMP =           self.M1_BMP[-1] if self.M1_BMP else 0.0
+                M1_IMU1 =          self.M1_IMU1[-1] if self.M1_IMU1 else 0.0
+                M1_IMU2 =          self.M1_IMU2[-1] if self.M1_IMU2 else 0.0
+                M1_MAG =           self.M1_MAG[-1] if self.M1_MAG else 0.0
+                M2_3V3 =           self.M2_3V3[-1] if self.M2_3V3 else 0.0
+                M2_XBee =          self.M2_XBee[-1] if self.M2_XBee else 0.0
+                PI_Bat =           self.PI_Bat[-1] if self.PI_Bat else 0.0
+                Pressure =         self.Pressure[-1] if self.Pressure else 0.0
+                unused1_id5 =      self.unused1_id5[-1] if self.unused1_id5 else 0.0
+                unused2_id5 =      self.unused2_id5[-1] if self.unused2_id5 else 0.0
+
+            self.temperature_time.append(temperature_time)
+            self.M1_DTS.append(M1_DTS)
+            self.M1_ADC.append(M1_ADC)
+            self.M1_BMP.append(M1_BMP)
+            self.M1_IMU1.append(M1_IMU1)
+            self.M1_IMU2.append(M1_IMU2)        
+            self.M1_MAG.append(M1_MAG)
+            self.M2_3V3.append(M2_3V3)
+            self.M2_XBee.append(M2_XBee)
+            self.PI_Bat.append(PI_Bat)
+            self.Pressure.append(Pressure)
+            self.unused1_id5.append(unused1_id5)
+            self.unused2_id5.append(unused2_id5)
+
+            self.maxtime_ID5 = self.timelimit_1
+            if len(self.temperature_time) > 1:
+                while self.temperature_time[-1] - self.temperature_time[0] > self.maxtime_ID5:
+                    self.temperature_time.pop(0)
+                    self.M1_DTS.pop(0)
+                    self.M1_ADC.pop(0)
+                    self.M1_BMP.pop(0)
+                    self.M1_IMU1.pop(0)
+                    self.M1_IMU2.pop(0)        
+                    self.M1_MAG.pop(0)
+                    self.M2_3V3.pop(0)
+                    self.M2_XBee.pop(0)
+                    self.PI_Bat.pop(0)
+                    self.Pressure.pop(0)
+                    self.unused1_id5.pop(0)
+                    self.unused2_id5.pop(0)
+            
+            if self.view_M1_DTS:
+                if self.alarrm_id5:
+                    self.graph_5_1_widget.setData(self.temperature_time, self.M1_DTS, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_1_widget.curve.setData(self.temperature_time, self.M1_DTS, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_1_widget.canvas.setTitle(self.struktur_ID5[2], color = "w")
+                self.graph_5_1_widget.canvas.setLabel("left", self.unit_ID5[2], color = "w")
+            if self.view_M1_ADC:
+                if self.alarrm_id5:
+                    self.graph_5_2_widget.setData(self.temperature_time, self.M1_ADC, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_2_widget.curve.setData(self.temperature_time, self.M1_ADC, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_2_widget.canvas.setTitle(self.struktur_ID5[3], color = "w")
+                self.graph_5_2_widget.canvas.setLabel("left", self.unit_ID5[3], color = "w")
+            if self.view_M1_BMP:
+                if self.alarrm_id5:
+                    self.graph_5_3_widget.setData(self.temperature_time, self.M1_BMP, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_3_widget.curve.setData(self.temperature_time, self.M1_BMP, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_3_widget.canvas.setTitle(self.struktur_ID5[4], color = "w")
+                self.graph_5_3_widget.canvas.setLabel("left", self.unit_ID5[4], color = "w")
+            if self.view_M1_IMU1:
+                if self.alarrm_id5:
+                    self.graph_5_4_widget.setData(self.temperature_time, self.M1_IMU1, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_4_widget.curve.setData(self.temperature_time, self.M1_IMU1, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_4_widget.canvas.setTitle(self.struktur_ID5[5], color = "w")
+                self.graph_5_4_widget.canvas.setLabel("left", self.unit_ID5[5], color = "w")
+            if self.view_M1_IMU2:
+                if self.alarrm_id5:
+                    self.graph_5_5_widget.setData(self.temperature_time, self.M1_IMU2, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_5_widget.curve.setData(self.temperature_time, self.M1_IMU2, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_5_widget.canvas.setTitle(self.struktur_ID5[6], color = "w")
+                self.graph_5_5_widget.canvas.setLabel("left", self.unit_ID5[6], color = "w")
+            if self.view_M1_MAG:
+                if self.alarrm_id5:
+                    self.graph_5_6_widget.setData(self.temperature_time, self.M1_MAG, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_6_widget.curve.setData(self.temperature_time, self.M1_MAG, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_6_widget.canvas.setTitle(self.struktur_ID5[7], color = "w")
+                self.graph_5_6_widget.canvas.setLabel("left", self.unit_ID5[7], color = "w")
+            if self.view_M2_3V3:
+                if self.alarrm_id5:
+                    self.graph_5_7_widget.setData(self.temperature_time, self.M2_3V3, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_7_widget.curve.setData(self.temperature_time, self.M2_3V3, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_7_widget.canvas.setTitle(self.struktur_ID5[8], color = "w")
+                self.graph_5_7_widget.canvas.setLabel("left", self.unit_ID5[8], color = "w")
+            if self.view_M2_XBee:
+                if self.alarrm_id5:
+                    self.graph_5_8_widget.setData(self.temperature_time, self.M2_XBee, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_8_widget.curve.setData(self.temperature_time, self.M2_XBee, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_8_widget.canvas.setTitle(self.struktur_ID5[9], color = "w")
+                self.graph_5_8_widget.canvas.setLabel("left", self.unit_ID5[9], color = "w")
+            if self.view_PI_Bat:
+                if self.alarrm_id5:
+                    self.graph_5_9_widget.setData(self.temperature_time, self.PI_Bat, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_9_widget.curve.setData(self.temperature_time, self.PI_Bat, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_9_widget.canvas.setTitle(self.struktur_ID5[10], color = "w")
+                self.graph_5_9_widget.canvas.setLabel("left", self.unit_ID5[10], color = "w")
+            if self.view_Pressure:
+                if self.alarrm_id5:
+                    self.graph_5_10_widget.setData(self.temperature_time, self.Pressure, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_10_widget.curve.setData(self.temperature_time, self.Pressure, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_10_widget.canvas.setTitle(self.struktur_ID5[11], color = "w")
+                self.graph_5_10_widget.canvas.setLabel("left", self.unit_ID5[11], color = "w")
+            if self.view_unused1_id5:
+                if self.alarrm_id5:
+                    self.graph_5_11_widget.setData(self.temperature_time, self.unused1_id5, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_11_widget.curve.setData(self.temperature_time, self.unused1_id5, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_11_widget.canvas.setTitle(self.struktur_ID5[12], color = "w")
+                self.graph_5_11_widget.canvas.setLabel("left", self.unit_ID5[12], color = "w")
+            if self.view_unused2_id5:
+                if self.alarrm_id5:
+                    self.graph_5_12_widget.setData(self.temperature_time, self.unused2_id5, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_5_12_widget.curve.setData(self.temperature_time, self.unused2_id5, pen=pg.mkPen(**self.plot_style))
+                self.graph_5_12_widget.canvas.setTitle(self.struktur_ID5[13], color = "w")
+                self.graph_5_12_widget.canvas.setLabel("left", self.unit_ID5[13], color = "w")
+
+        if daten_zeilenweise[0] == 6:   # POSITION Packet..........................................................
+            if not hasattr(self, "position_time"):
+                self.position_time = []
+                self.posX =          []
+                self.posY =          []
+                self.posZ =          []
+                self.velX =          []
+                self.velY =          []
+                self.velZ =          []
+                self.unused1_id6 =   []
+
+                self.alarrm_ID6 =     False
+                self.struktur_ID6, self.scaling_ID6, self.unit_ID6 = self.Datenstruktur(6)
+
+            if len(daten_zeilenweise) < 8:
+                daten_zeilenweise = daten_zeilenweise + ['0'] * (8 - len(daten_zeilenweise))
+            try:
+                position_time = float(daten_zeilenweise[1]) * self.scaling_ID6[1]
+                posX          = float(daten_zeilenweise[2]) * self.scaling_ID6[2]
+                posY          = float(daten_zeilenweise[3]) * self.scaling_ID6[3]
+                posZ          = float(daten_zeilenweise[4]) * self.scaling_ID6[4]
+                velX          = float(daten_zeilenweise[5]) * self.scaling_ID6[5]
+                velY          = float(daten_zeilenweise[6]) * self.scaling_ID6[6]
+                velZ          = float(daten_zeilenweise[7]) * self.scaling_ID6[7]
+                unused1_id6   = float(daten_zeilenweise[8]) * self.scaling_ID6[8]
+                self.alarrm_ID6 = False
+            except ValueError:
+                self.alarrm_ID6 = True
+                print("ungültiger Wert in Datenpaket ID6")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                position_time = self.position_time[-1] if self.position_time else 0.0
+                posX          = self.posX[-1] if self.posX else 0.0
+                posY          = self.posY[-1] if self.posY else 0.0
+                posZ          = self.posZ[-1] if self.posZ else 0.0
+                velX          = self.velX[-1] if self.velX else 0.0
+                velY          = self.velY[-1] if self.velY else 0.0
+                velZ          = self.velZ[-1] if self.velZ else 0.0
+                unused1_id6   = self.unused1_id6[-1] if self.unused1_id6 else 0.0
+
+            self.position_time.append(position_time)
+            self.posX.append(posX)
+            self.posY.append(posY)
+            self.posZ.append(posZ)
+            self.velX.append(velX)
+            self.velY.append(velY)
+            self.velZ.append(velZ)
+            self.unused1_id6.append(unused1_id6)
+
+            self.maxtime_ID6 = self.timelimit_1
+            if len(self.position_time) > 1:
+                while self.position_time[-1] - self.position_time[0] > self.maxtime_ID6:
+                    if not self.alarrm_ID6:
+                        self.position_time.pop(0)
+                        self.posX.pop(0)
+                        self.posY.pop(0)
+                        self.posZ.pop(0)
+                        self.velX.pop(0)
+                        self.velY.pop(0)
+                        self.velZ.pop(0)
+                        self.unused1_id6.pop(0)
+            
+            if self.view_posX:
+                if self.alarrm_ID6:
+                    self.graph_6_1_widget.setData(self.position_time, self.posX, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_1_widget.curve.setData(self.position_time, self.posX, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_1_widget.canvas.setTitle(self.struktur_ID6[2], color = "w")
+                self.graph_6_1_widget.canvas.setLabel("left", self.unit_ID6[2], color = "w")
+            if self.view_posY:
+                if self.alarrm_ID6:
+                    self.graph_6_2_widget.setData(self.position_time, self.posY, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_2_widget.curve.setData(self.position_time, self.posY, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_2_widget.canvas.setTitle(self.struktur_ID6[3], color = "w")
+                self.graph_6_2_widget.canvas.setLabel("left", self.unit_ID6[3], color = "w")
+            if self.view_posZ:
+                if self.alarrm_ID6:
+                    self.graph_6_3_widget.setData(self.position_time, self.posZ, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_3_widget.curve.setData(self.position_time, self.posZ, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_3_widget.canvas.setTitle(self.struktur_ID6[4], color = "w")
+                self.graph_6_3_widget.canvas.setLabel("left", self.unit_ID6[4], color = "w")
+            if self.view_velX:
+                if self.alarrm_ID6:
+                    self.graph_6_4_widget.setData(self.position_time, self.velX, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_4_widget.curve.setData(self.position_time, self.velX, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_4_widget.canvas.setTitle(self.struktur_ID6[5], color = "w")
+                self.graph_6_4_widget.canvas.setLabel("left", self.unit_ID6[5], color = "w")
+            if self.view_velY:
+                if self.alarrm_ID6:
+                    self.graph_6_5_widget.setData(self.position_time, self.velY, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_5_widget.curve.setData(self.position_time, self.velY, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_5_widget.canvas.setTitle(self.struktur_ID6[6], color = "w")
+                self.graph_6_5_widget.canvas.setLabel("left", self.unit_ID6[6], color = "w")
+            if self.view_velZ:
+                if self.alarrm_ID6:
+                    self.graph_6_6_widget.setData(self.position_time, self.velZ, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_6_widget.curve.setData(self.position_time, self.velZ, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_6_widget.canvas.setTitle(self.struktur_ID6[7], color = "w")
+                self.graph_6_6_widget.canvas.setLabel("left", self.unit_ID6[7], color = "w")
+            if self.view_unused1_id6:
+                if self.alarrm_ID6:
+                    self.graph_6_7_widget.setData(self.position_time, self.unused1_id6, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_6_7_widget.curve.setData(self.position_time, self.unused1_id6, pen=pg.mkPen(**self.plot_style))
+                self.graph_6_7_widget.canvas.setTitle(self.struktur_ID6[8], color = "w")
+                self.graph_6_7_widget.canvas.setLabel("left", self.unit_ID6[8], color = "w")
+
+        if daten_zeilenweise[0] == 7:   # ATTITUDE Packet........................................................
+            if not hasattr(self, "attitude_time"):
+                self.attitude_time = []
+                self.phi = []
+                self.theta = []
+                self.psi = []
+                self.unused1_id7 = []
+                self.unused2_id7 = []
+                self.unused3_id7 = []
+                self.unused4_id7 = []
+                self.unused5_id7 = []
+                self.unused6_id7 = []
+                self.alarrm_id7 = False
+                self.struktur_ID7, self.scaling_ID7, self.unit_ID7 = self.Datenstruktur(7)
+
+            if len(daten_zeilenweise) < 12:
+                daten_zeilenweise = daten_zeilenweise + ['0'] * (12 - len(daten_zeilenweise))
+            
+            try:
+                attitude_time = float(daten_zeilenweise[1]) * self.scaling_ID7[1]
+                phi           = float(daten_zeilenweise[2]) * self.scaling_ID7[2]
+                theta         = float(daten_zeilenweise[3]) * self.scaling_ID7[3]
+                psi           = float(daten_zeilenweise[4]) * self.scaling_ID7[4]
+                unused1_id7   = float(daten_zeilenweise[5]) * self.scaling_ID7[5]
+                unused2_id7   = float(daten_zeilenweise[6]) * self.scaling_ID7[6]
+                unused3_id7   = float(daten_zeilenweise[7]) * self.scaling_ID7[7]
+                unused4_id7   = float(daten_zeilenweise[8]) * self.scaling_ID7[8]
+                unused5_id7   = float(daten_zeilenweise[9]) * self.scaling_ID7[9]
+                unused6_id7   = float(daten_zeilenweise[10]) * self.scaling_ID7[10]
+                self.alarrm_id7 = False
+            except ValueError:
+                self.alarrm_id7 = True
+                print("ungültiger Wert in Datenpaket ID7")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                attitude_time = self.attitude_time[-1] if self.attitude_time else 0.0
+                phi           = self.phi[-1] if self.phi else 0.0
+                theta         = self.theta[-1] if self.theta else 0.0
+                psi           = self.psi[-1] if self.psi else 0.0
+                unused1_id7   = self.unused1_id7[-1] if self.unused1_id7 else 0.0
+                unused2_id7   = self.unused2_id7[-1] if self.unused2_id7 else 0.0
+                unused3_id7   = self.unused3_id7[-1] if self.unused3_id7 else 0.0
+                unused4_id7   = self.unused4_id7[-1] if self.unused4_id7 else 0.0
+                unused5_id7   = self.unused5_id7[-1] if self.unused5_id7 else 0.0
+                unused6_id7   = self.unused6_id7[-1] if self.unused6_id7 else 0.0
+            
+            self.attitude_time.append(attitude_time)
+            self.phi.append(phi)
+            self.theta.append(theta)
+            self.psi.append(psi)
+            self.unused1_id7.append(unused1_id7)
+            self.unused2_id7.append(unused2_id7)
+            self.unused3_id7.append(unused3_id7)
+            self.unused4_id7.append(unused4_id7)
+            self.unused5_id7.append(unused5_id7)
+            self.unused6_id7.append(unused6_id7)
+
+            self.maxtime_ID7 = self.timelimit_1
+            if len(self.attitude_time) > 1:
+                while self.attitude_time[-1] - self.attitude_time[0] > self.maxtime_ID7:
+                    if not self.alarrm_id7:
+                        self.attitude_time.pop(0)
+                        self.phi.pop(0)
+                        self.theta.pop(0)
+                        self.psi.pop(0)
+                        self.unused1_id7.pop(0)
+                        self.unused2_id7.pop(0)
+                        self.unused3_id7.pop(0)
+                        self.unused4_id7.pop(0)
+                        self.unused5_id7.pop(0)
+                        self.unused6_id7.pop(0)
+            
+            if self.view_phi:
+                if self.alarrm_id7:
+                    self.graph_7_1_widget.setData(self.attitude_time, self.phi, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_1_widget.curve.setData(self.attitude_time, self.phi, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_1_widget.canvas.setTitle(self.struktur_ID7[2], color = "w")
+                self.graph_7_1_widget.canvas.setLabel("left", self.unit_ID7[2], color = "w")
+            if self.view_theta:
+                if self.alarrm_id7:
+                    self.graph_7_2_widget.setData(self.attitude_time, self.theta, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_2_widget.curve.setData(self.attitude_time, self.theta, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_2_widget.canvas.setTitle(self.struktur_ID7[3], color = "w")
+                self.graph_7_2_widget.canvas.setLabel("left", self.unit_ID7[3], color = "w")
+            if self.view_psi:
+                if self.alarrm_id7:
+                    self.graph_7_3_widget.setData(self.attitude_time, self.psi, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_3_widget.curve.setData(self.attitude_time, self.psi, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_3_widget.canvas.setTitle(self.struktur_ID7[4], color = "w")
+                self.graph_7_3_widget.canvas.setLabel("left", self.unit_ID7[4], color = "w")
+            if self.view_unused1_id7:
+                if self.alarrm_id7:
+                    self.graph_7_4_widget.setData(self.attitude_time, self.unused1_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_4_widget.curve.setData(self.attitude_time, self.unused1_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_4_widget.canvas.setTitle(self.struktur_ID7[5], color = "w")
+                self.graph_7_4_widget.canvas.setLabel("left", self.unit_ID7[5], color = "w")
+            if self.view_unused2_id7:
+                if self.alarrm_id7:
+                    self.graph_7_5_widget.setData(self.attitude_time, self.unused2_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_5_widget.curve.setData(self.attitude_time, self.unused2_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_5_widget.canvas.setTitle(self.struktur_ID7[6], color = "w")
+                self.graph_7_5_widget.canvas.setLabel("left", self.unit_ID7[6], color = "w")
+            if self.view_unused3_id7:
+                if self.alarrm_id7:
+                    self.graph_7_6_widget.setData(self.attitude_time, self.unused3_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_6_widget.curve.setData(self.attitude_time, self.unused3_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_6_widget.canvas.setTitle(self.struktur_ID7[7], color = "w")
+                self.graph_7_6_widget.canvas.setLabel("left", self.unit_ID7[7], color = "w")
+            if self.view_unused4_id7:
+                if self.alarrm_id7:
+                    self.graph_7_7_widget.setData(self.attitude_time, self.unused4_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_7_widget.curve.setData(self.attitude_time, self.unused4_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_7_widget.canvas.setTitle(self.struktur_ID7[8], color = "w")
+                self.graph_7_7_widget.canvas.setLabel("left", self.unit_ID7[8], color = "w")
+            if self.view_unused5_id7:
+                if self.alarrm_id7:
+                    self.graph_7_8_widget.setData(self.attitude_time, self.unused5_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_8_widget.curve.setData(self.attitude_time, self.unused5_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_8_widget.canvas.setTitle(self.struktur_ID7[9], color = "w")
+                self.graph_7_8_widget.canvas.setLabel("left", self.unit_ID7[9], color = "w")
+            if self.view_unused6_id7:
+                if self.alarrm_id7:
+                    self.graph_7_9_widget.setData(self.attitude_time, self.unused6_id7, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_7_9_widget.curve.setData(self.attitude_time, self.unused6_id7, pen=pg.mkPen(**self.plot_style))
+                self.graph_7_9_widget.canvas.setTitle(self.struktur_ID7[10], color = "w")
+                self.graph_7_9_widget.canvas.setLabel("left", self.unit_ID7[10], color = "w")
+            
+        if daten_zeilenweise[0] == 8:   # KALMAN Packet..........................................................
+            if not hasattr(self, "kalman_time"):
+                self.kalman_time =  []
+                self.P11 =          []
+                self.P22 =          []
+                self.P33 =          []
+                self.EKF2_Height =  []
+                self.EKF2_vel =     []
+                self.EKF2_refPres = []
+                self.unused1_id8 =  []
+                self.alarrm_id8 = False
+                self.struktur_ID8, self.scaling_ID8, self.unit_ID8 = self.Datenstruktur(8)        
+
+            if len(daten_zeilenweise) < 12:
+                daten_zeilenweise = daten_zeilenweise + ['0'] * (12 - len(daten_zeilenweise))
+            try:
+                kalman_time  = float(daten_zeilenweise[1]) * self.scaling_ID8[1]
+                P11          = float(daten_zeilenweise[2]) * self.scaling_ID8[2]
+                P22          = float(daten_zeilenweise[3]) * self.scaling_ID8[3]
+                P33          = float(daten_zeilenweise[4]) * self.scaling_ID8[4]
+                EKF2_Height  = float(daten_zeilenweise[5]) * self.scaling_ID8[5]
+                EKF2_vel     = float(daten_zeilenweise[6]) * self.scaling_ID8[6]
+                EKF2_refPres = float(daten_zeilenweise[7]) * self.scaling_ID8[7]
+                unused1_id8  = float(daten_zeilenweise[8]) * self.scaling_ID8[8]
+                self.alarrm_id8 = False
+            except ValueError:
+                self.alarrm_id8 = True
+                print("ungültiger Wert in Datenpaket ID8")
+                # Letzten Wert wiederholen (oder 0.0, falls Liste leer)
+                kalman_time  = self.kalman_time[-1] if self.kalman_time else 0.0
+                P11          = self.P11[-1] if self.P11 else 0.0
+                P22          = self.P22[-1] if self.P22 else 0.0
+                P33          = self.P33[-1] if self.P33 else 0.0
+                EKF2_Height  = self.EKF2_Height[-1] if self.EKF2_Height else 0.0
+                EKF2_vel     = self.EKF2_vel[-1] if self.EKF2_vel else 0.0
+                EKF2_refPres = self.EKF2_refPres[-1] if self.EKF2_refPres else 0.0
+                unused1_id8  = self.unused1_id8[-1] if self.unused1_id8 else 0.0   
+
+            self.kalman_time.append(kalman_time)
+            self.P11.append(P11)
+            self.P22.append(P22)
+            self.P33.append(P33)
+            self.EKF2_Height.append(EKF2_Height)
+            self.EKF2_vel.append(EKF2_vel)
+            self.EKF2_refPres.append(EKF2_refPres)
+            self.unused1_id8.append(unused1_id8)
+
+            self.maxtime_ID8 = self.timelimit_1
+            if len(self.kalman_time) > 1:
+                while self.kalman_time[-1] - self.kalman_time[0] > self.maxtime_ID8:
+                    if not self.alarrm_id8:
+                        self.kalman_time.pop(0)
+                        self.P11.pop(0)
+                        self.P22.pop(0)
+                        self.P33.pop(0)
+                        self.EKF2_Height.pop(0)
+                        self.EKF2_vel.pop(0)
+                        self.EKF2_refPres.pop(0)
+                        self.unused1_id8.pop(0)
+            
+            if self.view_P11:
+                if self.alarrm_id8:
+                    self.graph_8_1_widget.setData(self.kalman_time, self.P11, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_1_widget.curve.setData(self.kalman_time, self.P11, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_1_widget.canvas.setTitle(self.struktur_ID8[2], color = "w")
+                self.graph_8_1_widget.canvas.setLabel("left", self.unit_ID8[2], color = "w")
+            if self.view_P22:
+                if self.alarrm_id8:
+                    self.graph_8_2_widget.setData(self.kalman_time, self.P22, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_2_widget.curve.setData(self.kalman_time, self.P22, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_2_widget.canvas.setTitle(self.struktur_ID8[3], color = "w")
+                self.graph_8_2_widget.canvas.setLabel("left", self.unit_ID8[3], color = "w")
+            if self.view_P33:
+                if self.alarrm_id8:
+                    self.graph_8_3_widget.setData(self.kalman_time, self.P33, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_3_widget.curve.setData(self.kalman_time, self.P33, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_3_widget.canvas.setTitle(self.struktur_ID8[4], color = "w")
+                self.graph_8_3_widget.canvas.setLabel("left", self.unit_ID8[4], color = "w")
+            if self.view_EKF2_Height:
+                if self.alarrm_id8:
+                    self.graph_8_4_widget.setData(self.kalman_time, self.EKF2_Height, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_4_widget.curve.setData(self.kalman_time, self.EKF2_Height, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_4_widget.canvas.setTitle(self.struktur_ID8[5], color = "w")
+                self.graph_8_4_widget.canvas.setLabel("left", self.unit_ID8[5], color = "w")
+            if self.view_EKF2_vel:
+                if self.alarrm_id8:
+                    self.graph_8_5_widget.setData(self.kalman_time, self.EKF2_vel, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_5_widget.curve.setData(self.kalman_time, self.EKF2_vel, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_5_widget.canvas.setTitle(self.struktur_ID8[6], color = "w")
+                self.graph_8_5_widget.canvas.setLabel("left", self.unit_ID8[6], color = "w")
+            if self.view_EKF2_refPres:
+                if self.alarrm_id8:
+                    self.graph_8_6_widget.setData(self.kalman_time, self.EKF2_refPres, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_6_widget.curve.setData(self.kalman_time, self.EKF2_refPres, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_6_widget.canvas.setTitle(self.struktur_ID8[7], color = "w")
+                self.graph_8_6_widget.canvas.setLabel("left", self.unit_ID8[7], color = "w")
+            if self.view_unused1_id8:
+                if self.alarrm_id8:
+                    self.graph_8_7_widget.setData(self.kalman_time, self.unused1_id8, pen=pg.mkPen(**self.plot_style_alarrm))
+                else:
+                    self.graph_8_7_widget.curve.setData(self.kalman_time, self.unused1_id8, pen=pg.mkPen(**self.plot_style))
+                self.graph_8_7_widget.canvas.setTitle(self.struktur_ID8[8], color = "w")
+                self.graph_8_7_widget.canvas.setLabel("left", self.unit_ID8[8], color = "w")
+
+        else:
+            pass
+            #print("ungültige ID/ andere Informationen")
+            #print(daten_zeilenweise)
+
+    def DatGibtNeAnzeige(self):
+        # ANZEIGEBESTIMMUNGEN der Daten
+        
+        # ID1 - Status Packet...........................................................................
+        # Status flags:
+        self.view_statusflag = False
+        self.pos_statusflag = [0, 0]
+        # Sensor status flags:
+        self.view_sensorstatusflags = False
+        self.pos_sensorstatusflags = [0, 0]
+        # State:
+        self.view_state = False
+        self.pos_state = [0, 0]
+
+        graphpos_ID1 = [self.pos_statusflag, self.pos_sensorstatusflags, self.pos_state]
+        graphview_ID1 = [self.view_statusflag, self.view_sensorstatusflags, self.view_state]
+        graphname_ID1 = self.Datenstruktur(1)[0][2:len(self.Datenstruktur(1)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID1)):
+            if graphview_ID1[i] and not graphpos_ID1[i] == [0, 0]:
+                widget_name = f"graph_1_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID1[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID1[i][0], graphpos_ID1[i][1])
+                       
+
+        # ID2 - Power Packet.............................................................................     
+        # M1_5V_bus:
+        self.view_M1_5V_bus = False
+        self.pos_M1_5V_bus = [0, 0]
+        # M1_BAT_bus:
+        self.view_M1_BAT_bus = False
+        self.pos_M1_BAT_bus = [0, 0]
+        # unused1:
+        self.view_unused1 = False
+        self.pos_unused1 = [0, 0]
+        # M2_bus_5V:
+        self.view_M2_bus_5V = False
+        self.pos_M2_bus_5V = [0, 0]
+        # M2_bus_GPA_bat:
+        self.view_M2_bus_GPA_bat = False
+        self.pos_M2_bus_GPA_bat = [0, 0]
+        # unused2:
+        self.view_unused2 = False
+        self.pos_unused2 = [0, 0]
+        # PU_pow:
+        self.view_PU_pow = False
+        self.pos_PU_pow = [0, 0]
+        # PU_curr:
+        self.view_PU_curr = False
+        self.pos_PU_curr = [0, 0]
+        # PU_bat_bus:
+        self.view_PU_bat_bus = False
+        self.pos_PU_bat_bus = [0, 0]
+        # unused3:
+        self.view_unused3 = False
+        self.pos_unused3 = [0, 0]
+
+        graphpos_ID2 = [self.pos_M1_5V_bus, self.pos_M1_BAT_bus, self.pos_unused1, self.pos_M2_bus_5V,
+                        self.pos_M2_bus_GPA_bat, self.pos_unused2, self.pos_PU_pow,
+                        self.pos_PU_curr, self.pos_PU_bat_bus, self.pos_unused3]
+        graphview_ID2 = [self.view_M1_5V_bus, self.view_M1_BAT_bus, self.view_unused1, self.view_M2_bus_5V,
+                         self.view_M2_bus_GPA_bat, self.view_unused2, self.view_PU_pow,
+                         self.view_PU_curr, self.view_PU_bat_bus, self.view_unused3]
+        graphname_ID2 = self.Datenstruktur(2)[0][2:len(self.Datenstruktur(2)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID2)):
+            if graphview_ID2[i] and not graphpos_ID2[i] == [0, 0]:
+                widget_name = f"graph_2_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID2[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID2[i][0], graphpos_ID2[i][1])
+    
+
+        # ID3 - GPS Packet...............................................................................
+        # latitude:
+        self.view_latitude = False
+        self.pos_latitude = [0, 0]
+        # longitude:
+        self.view_longitude = False
+        self.pos_longitude = [0, 0]
+        # altitude:
+        self.view_altitude = False
+        self.pos_altitude = [0, 0]
+        # speed:
+        self.view_speed = False
+        self.pos_speed = [0, 0]
+        # course:
+        self.view_course = False
+        self.pos_course = [0, 0]
+        # unused1:
+        self.view_unused1_id3 = False
+        self.pos_unused1_id3 = [0, 0]
+        # unused2:
+        self.view_unused2_id3 = False
+        self.pos_unused2_id3 = [0, 0]
+        # unused3:
+        self.view_unused3_id3 = False
+        self.pos_unused3_id3 = [0, 0]
+        # unused4:
+        self.view_unused4_id3 = False
+        self.pos_unused4_id3 = [0, 0]
+        # unused5:
+        self.view_unused5_id3 = False
+        self.pos_unused5_id3 = [0, 0]
+
+        graphpos_ID3 = [self.pos_latitude, self.pos_longitude, self.pos_altitude, self.pos_speed,
+                        self.pos_course, self.pos_unused1_id3, self.pos_unused2_id3,
+                        self.pos_unused3_id3, self.pos_unused4_id3, self.pos_unused5_id3]
+        graphview_ID3 = [self.view_latitude, self.view_longitude, self.view_altitude, self.view_speed,
+                         self.view_course, self.view_unused1_id3, self.view_unused2_id3,
+                         self.view_unused3_id3, self.view_unused4_id3, self.view_unused5_id3]
+        graphname_ID3 = self.Datenstruktur(3)[0][2:len(self.Datenstruktur(3)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID3)):
+            if graphview_ID3[i] and not graphpos_ID3[i] == [0, 0]:
+                widget_name = f"graph_3_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID3[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID3[i][0], graphpos_ID3[i][1])
+
+
+        # ID4 - IMU Packet
+        # IMU1_x_accel:
+        self.view_IMU1_x_accel = False
+        self.pos_IMU1_x_accel = [3, 1]
+        # IMU1_y_accel:
+        self.view_IMU1_y_accel = False
+        self.pos_IMU1_y_accel = [4, 1]
+        # IMU1_z_accel:
+        self.view_IMU1_z_accel = False
+        self.pos_IMU1_z_accel = [5, 1]
+        # IMU1_x_gyro:
+        self.view_IMU1_x_gyro = False
+        self.pos_IMU1_x_gyro = [3, 2]
+        # IMU1_y_gyro:
+        self.view_IMU1_y_gyro = False
+        self.pos_IMU1_y_gyro = [4, 2]
+        # IMU1_z_gyro:
+        self.view_IMU1_z_gyro = False
+        self.pos_IMU1_z_gyro = [5, 2]
+        # magX:
+        self.view_magX = True
+        self.pos_magX = [3, 1]
+        # magY:
+        self.view_magY = True
+        self.pos_magY = [4, 1]
+        # magZ:
+        self.view_magZ = True
+        self.pos_magZ = [5, 1]
+        # unused:
+        self.view_unused_id4 = False
+        self.pos_unused_id4 = [0, 0]
+
+        graphpos_ID4 = [self.pos_IMU1_x_accel, self.pos_IMU1_y_accel, self.pos_IMU1_z_accel, self.pos_IMU1_x_gyro,
+                        self.pos_IMU1_y_gyro, self.pos_IMU1_z_gyro, self.pos_magX,
+                        self.pos_magY, self.pos_magZ, self.pos_unused_id4]
+        graphview_ID4 = [self.view_IMU1_x_accel, self.view_IMU1_y_accel, self.view_IMU1_z_accel, self.view_IMU1_x_gyro,
+                         self.view_IMU1_y_gyro, self.view_IMU1_z_gyro, self.view_magX,
+                         self.view_magY, self.view_magZ, self.view_unused_id4]     
+        graphname_ID4 = self.Datenstruktur(4)[0][2:len(self.Datenstruktur(4)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID4)):
+            if graphview_ID4[i] and not graphpos_ID4[i] == [0, 0]:
+                widget_name = f"graph_4_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID4[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID4[i][0], graphpos_ID4[i][1])
+
+
+        # ID5 - Temperature Packet
+        # M1_DTS:
+        self.view_M1_DTS = False
+        self.pos_M1_DTS = [0, 0]
+        # M1_ADC:
+        self.view_M1_ADC = False
+        self.pos_M1_ADC = [0, 0]
+        # M1_BMP:
+        self.view_M1_BMP = False
+        self.pos_M1_BMP = [0, 0]
+        # M1_IMU1:
+        self.view_M1_IMU1 = False
+        self.pos_M1_IMU1 = [0, 0]
+        # M1_IMU2:
+        self.view_M1_IMU2 = False
+        self.pos_M1_IMU2 = [0, 0]
+        # M1_MAG:
+        self.view_M1_MAG = False
+        self.pos_M1_MAG = [0, 0]
+        # M2_3V3:
+        self.view_M2_3V3 = False
+        self.pos_M2_3V3 = [0, 0]
+        # M2_XBee:
+        self.view_M2_XBee = False
+        self.pos_M2_XBee = [0, 0]
+        # PU_BAT:
+        self.view_PU_BAT = False
+        self.pos_PU_BAT = [0, 0]
+        # Pressure:
+        self.view_Pressure = False
+        self.pos_Pressure = [0, 0]
+        # unused1:
+        self.view_unused1_id5 = False
+        self.pos_unused1_id5 = [0, 0]
+        # unused2:
+        self.view_unused2_id5 = False
+        self.pos_unused2_id5 = [0, 0]
+        
+        graphpos_ID5 = [self.pos_M1_DTS, self.pos_M1_ADC, self.pos_M1_BMP, self.pos_M1_IMU1,
+                        self.pos_M1_IMU2, self.pos_M1_MAG, self.pos_M2_3V3,
+                        self.pos_M2_XBee, self.pos_PU_BAT, self.pos_Pressure,
+                        self.pos_unused1_id5, self.pos_unused2_id5]
+        graphview_ID5 = [self.view_M1_DTS, self.view_M1_ADC, self.view_M1_BMP, self.view_M1_IMU1,
+                         self.view_M1_IMU2, self.view_M1_MAG, self.view_M2_3V3,
+                         self.view_M2_XBee, self.view_PU_BAT, self.view_Pressure,
+                         self.view_unused1_id5, self.view_unused2_id5]
+        graphname_ID5 = self.Datenstruktur(5)[0][2:len(self.Datenstruktur(5)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID5)):
+            if graphview_ID5[i] and not graphpos_ID5[i] == [0, 0]:
+                widget_name = f"graph_5_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID5[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID5[i][0], graphpos_ID5[i][1])
+
+
+        # ID6 - Position Packet
+        # posX:
+        self.view_posX = False
+        self.pos_posX = [0, 0]
+        # posY:
+        self.view_posY = False
+        self.pos_posY = [0, 0]
+        # posZ:
+        self.view_posZ = False
+        self.pos_posZ = [0, 0]
+        # velX:
+        self.view_velX = False
+        self.pos_velX = [0, 0]
+        # velY:
+        self.view_velY = False
+        self.pos_velY = [0, 0]
+        # velZ:
+        self.view_velZ = False
+        self.pos_velZ = [0, 0]
+        # unused1:
+        self.view_unused1_id6 = False
+        self.pos_unused1_id6 = [0, 0]
+
+        graphpos_ID6 = [self.pos_posX, self.pos_posY, self.pos_posZ, self.pos_velX,
+                        self.pos_velY, self.pos_velZ, self.pos_unused1_id6]
+        graphview_ID6 = [self.view_posX, self.view_posY, self.view_posZ, self.view_velX,
+                         self.view_velY, self.view_velZ, self.view_unused1_id6]
+        graphname_ID6 = self.Datenstruktur(6)[0][2:len(self.Datenstruktur(6)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID6)):
+            if graphview_ID6[i] and not graphpos_ID6[i] == [0, 0]:
+                widget_name = f"graph_6_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID6[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID6[i][0], graphpos_ID6[i][1])
+
+
+        # ID7 - Attitude Packet
+        # phi:
+        self.view_phi = True
+        self.pos_phi = [3, 2]
+        # theta:
+        self.view_theta = True
+        self.pos_theta = [4, 2]
+        # psi:
+        self.view_psi = True
+        self.pos_psi = [5, 2]
+        # unused1:
+        self.view_unused1_id7 = False
+        self.pos_unused1_id7 = [0, 0]
+        # unused2:
+        self.view_unused2_id7 = False
+        self.pos_unused2_id7 = [0, 0]
+        # unused3:
+        self.view_unused3_id7 = False
+        self.pos_unused3_id7 = [0, 0]
+        # unused4:
+        self.view_unused4_id7 = False
+        self.pos_unused4_id7 = [0, 0]
+        # unused5:
+        self.view_unused5_id7 = False
+        self.pos_unused5_id7 = [0, 0]
+        # unused6:
+        self.view_unused6_id7 = False
+        self.pos_unused6_id7 = [0, 0]
+
+        graphpos_ID7 = [self.pos_phi, self.pos_theta, self.pos_psi, self.pos_unused1_id7,
+                        self.pos_unused2_id7, self.pos_unused3_id7, self.pos_unused4_id7,
+                        self.pos_unused5_id7, self.pos_unused6_id7]
+        graphview_ID7 = [self.view_phi, self.view_theta, self.view_psi, self.view_unused1_id7,
+                         self.view_unused2_id7, self.view_unused3_id7, self.view_unused4_id7,
+                         self.view_unused5_id7, self.view_unused6_id7]
+        graphname_ID7 = self.Datenstruktur(7)[0][2:len(self.Datenstruktur(7)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID7)):
+            if graphview_ID7[i] and not graphpos_ID7[i] == [0, 0]:
+                widget_name = f"graph_7_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID7[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID7[i][0], graphpos_ID7[i][1])
+
+
+        # ID8 - Kalman Matrix Packet
+        # P11:
+        self.view_P11 = False
+        self.pos_P11 = [0, 0]
+        # P22:
+        self.view_P22 = False
+        self.pos_P22 = [0, 0]
+        # P33:
+        self.view_P33 = False
+        self.pos_P33 = [0, 0]
+        # EKF2_Height:
+        self.view_EKF2_Height = False
+        self.pos_EKF2_Height = [0, 0]
+        # EKF2_vel:
+        self.view_EKF2_vel = False
+        self.pos_EKF2_vel = [0, 0]
+        # EKF2_refPres:
+        self.view_EKF2_refPres = False
+        self.pos_EKF2_refPres = [0, 0]
+        # unused1:
+        self.view_unused1_id8 = False
+        self.pos_unused1_id8 = [0, 0]
+
+        graphpos_ID8 = [self.pos_P11, self.pos_P22, self.pos_P33, self.pos_EKF2_Height,
+                        self.pos_EKF2_vel, self.pos_EKF2_refPres, self.pos_unused1_id8]
+        graphview_ID8 = [self.view_P11, self.view_P22, self.view_P33, self.view_EKF2_Height,
+                         self.view_EKF2_vel, self.view_EKF2_refPres, self.view_unused1_id8]
+        graphname_ID8 = self.Datenstruktur(8)[0][2:len(self.Datenstruktur(8)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID8)):
+            if graphview_ID8[i] and not graphpos_ID8[i] == [0, 0]:
+                widget_name = f"graph_8_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID8[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID8[i][0], graphpos_ID8[i][1])
+
+    def Datenstruktur(self, id):
+        # Struktur der Daten:
+        # ID 1 - Status Packet
+        # ID 2 - Power Packet
+        # ID 3 - GPS Packet
+        # ID 4 - IMU Packet
+        # ID 5 - Temperature Packet
+        # ID 6 - Position Packet
+        # ID 7 - Attitude Packet
+        # ID 8 - Kalman Matrix Packet
+        
+        if id == 1:
+            struktur = ["ID", "Time", "Status flags", "Sensor status flags", "State"]
+            scaling = [    1,   1e-3,              1,                     1,       1]
+            unit = [   ""   ,    "s",             "",                    "",      ""]
+        if id == 2:
+            struktur = ["ID", "Time", "M1_5V_bus", "M1_BAT_bus", "unused1", "M2_bus_5V", "M2_bus_GPA_bat", "unused2", "PU_pow", "PU_curr", "PU_bat_bus", "unused3"]
+            scaling = [    1,   1e-3,        1e-3,         1e-3,         1,        1e-3,             1e-3,         1,     1e-3,      1e-3,         1e-3,         1]
+            unit = [      "",    "s",         "V",          "V",        "",         "V",              "V",        "",      "W",       "A",          "V",        ""]
+        if id == 3:
+            struktur = ["ID", "Time", "latitude", "longitude", "altitude", "speed", "course", "unused1", "unused2", "unused3", "unused4", "unused5"]
+            scaling = [    1,   1e-3,       1e-7,        1e-7,          1,       1,     1e-5,         1,         1,         1,         1,         1]
+            unit = [      "",    "s",       "°",         "°",        "mm",  "cm/s",      "°",        "",        "",        "",        "",        ""]
+        if id == 4:
+            struktur = ["ID", "Time", "IMU1_x_accel", "IMU1_y_accel", "IMU1_z_accel", "IMU1_x_gyro", "IMU1_y_gyro", "IMU1_z_gyro", "magX", "magY", "magZ", "unused"]
+            scaling = [    1,   1e-3,           1e-6,           1e-6,           1e-6,          1e-6,          1e-6,          1e-6,   1e-4,   1e-4,   1e-4,        1]
+            unit = [      "",    "s",        "m/s^2",        "m/s^2",        "m/s^2",            "",            "",            "",     "",     "",     "",       ""] 
+        if id == 5:
+            struktur = ["ID", "Time", "M1_DTS", "M1_ADC", "M1_BMP", "M1_IMU1", "M1_IMU2", "M1_MAG", "M2_3V3", "M2_XBee", "PU_Bat", "Pressure", "unused1", "unused2"]
+            scaling = [    1,   1e-3,     1e-2,     1e-2,     1e-2,      1e-2,      1e-2,     1e-2,     1e-2,      1e-2,     1e-2,          1,         1,         1]
+            unit = [      "",    "s",     "°C",     "°C",     "°C",      "°C",      "°C",     "°C",     "°C",      "°C",     "°C",       "Pa",        "",        ""]
+        if id == 6:
+            struktur = ["ID", "Time", "posX", "posY", "posZ", "velX", "velY", "velZ", "unused1"]
+            scaling = [    1,   1e-3,   1e-3,   1e-3,   1e-3,   1e-3,   1e-6,   1e-6,         1]
+            unit = [      "",    "s",    "m",    "m",    "m",  "m/s",  "m/s",  "m/s",        ""]
+        if id == 7:
+            struktur = ["ID", "Time", "phi", "theta", "psi", "unused1", "unused2", "unused3", "unused4", "unused5", "unused6"]
+            scaling = [    1,   1e-3,     1,    1e-6,  1e-6,         1,         1,         1,         1,         1,         1]
+            unit = [      "",    "s",   "°",     "°",   "°",        "",        "",        "",        "",        "",        ""]
+        if id == 8:
+            struktur = ["ID", "Time", "P11",  "P22", "P33", "EKF2_Height", "EKF2_vel", "EKF2_refPres", "unused1"]
+            scaling = [    1,   1e-3,     1,      1,     1,             1,          1,              1,         1]
+            unit = [      "", "Time",  "m²","m²/s²", "Pa²",           "m",      "m/s",           "Pa",         1]
+        return struktur, scaling, unit
+
+    def setData(self, x, y, **kwargs):
+        pen = pg.mkPen(**kwargs)
+        self.curve.setPen(pen)
+        self.curve.setData(x, y)  
+
+def main():
+    app = QtWidgets.QApplication([])
+    window = FlightDataWindow()
+    window.show()
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
+

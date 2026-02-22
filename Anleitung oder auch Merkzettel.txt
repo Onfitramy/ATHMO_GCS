@@ -1,0 +1,17 @@
+Schritte zum erfolgreichen Erstellen eines Graphen mit PyQt5:
+
+1. import der benötigten libraries
+
+2. definieren einer Funktion (Klasse) zum plotten von Daten:
+	class FUNKTIONSNAME(QtWidgets.QWidget)					Ausdruck in den Klammern gibt vor, welche Struktur das zu erstellende Element haben soll
+		def __init__(self, title="Plot")				title wichtig, ="Plot" optional, falls kein Titel übergeben wird
+			super().__init__()
+			self.canvas = FigureCanvas(Figure())			FigureCanvas wandelt matplotlib Figure in Qt-widget um, wirkt wie figure in Matlab
+			self.ax = self.canvas.figure.add_subplot(111)		self.canvas.figure nimmt vorher erstellte und eingebettete figure, add_subplot fügt Achsen hinzu. (111) steht für Zeile 1, Spalte 1, Position 1.
+		
+			layout = QtWidgets.QGridLayout()			definiert ein QtWidget-Grid-Layout
+			layout.addWidget(self.canvas)				fügt das eben erstellte widget vom objekt self in das layout hinzu
+			self.setLayout(layout)					setzt das layout des self-Objektes als das vorher definierte Layout fest.
+		def plot(self, x, y, **kwargs)					plottet die übergebenen Daten x und y in self. **kwargs ist ein Platzhalter für weitere Eigenschaften
+			self.ax.plot(x, y, **kwargs)				macht es dann auch tatsächlich
+			self.canvas.draw()					macht den gezeichneten Graph dann auch sichtbar
