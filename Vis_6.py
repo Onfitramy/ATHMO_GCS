@@ -67,6 +67,7 @@ class StartKnopfi(QtWidgets.QDialog):
         self.setLayout(self.layout)
 
 class SignalLeseGerät(QtCore.QThread):
+    status_senden = QtCore.pyqtSignal(str)
     header_signal = QtCore.pyqtSignal(list)
     werte_signal  = QtCore.pyqtSignal(list)
 
@@ -112,6 +113,17 @@ class SignalLeseGerät(QtCore.QThread):
                         #print("mit ID:", daten_zeilenweise)
                         self.werte_signal.emit(daten_zeilenweise)
                         self.werte.append(daten_zeilenweise)
+
+
+
+                        if id == 1:
+                            try:    
+                                self.status_senden.emit(daten_zeilenweise[4])
+                            except Exception as e:
+                                print("Fehler beim Senden des Status:", e)
+
+
+
                     else:
                         print("Zeile ohne ID-Präfix empfangen, wird ignoriert:" , daten_zeilenweise)
                         continue
@@ -127,7 +139,7 @@ class SignalLeseGerät(QtCore.QThread):
         self.wait()
 
 class ActionButton(QtWidgets.QDialog):
-    kommando_senden = QtCore.pyqtSignal(str)
+    kommando_senden     = QtCore.pyqtSignal(str)
     def __init__(self, cat = None, command = None, style = None, port = None, mode = None):    # cat: Kategorie, text: Button-Text, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
         super().__init__()
         self.cat = cat
@@ -232,6 +244,7 @@ class ActionButton(QtWidgets.QDialog):
 
 class InputActionButton(QtWidgets.QDialog):
     kommando_senden = QtCore.pyqtSignal(str)
+    stateforce_kommando = QtCore.pyqtSignal(str, bool)
     def __init__(self, cat = None, command = None, style = None, port = None, size = None, isserious = True):    # cat: Kategorie, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
         super().__init__()
         #### Breite der Knöpfe: 356 px
@@ -278,6 +291,14 @@ class InputActionButton(QtWidgets.QDialog):
             if port.is_open:
                 port.write((befehl + "\n").encode())
                 self.kommando_senden.emit(befehl)
+                
+############################################################## experimentell ################
+
+                if self.command == "State_Force":
+                    self.stateforce_kommando.emit(eingegebener_wert, True)
+
+#########################################################################
+
                 print("Kommando gegeben o7 ", befehl)
             else:
                 print("Nö")
@@ -300,32 +321,81 @@ class WertAnzeigen(QtWidgets.QWidget): # Dient zur Anzeige von (variablen) Werte
         self.label.setText(f"{variable_name}:\n{value}{unit}")
 
 class TextFenster(QtWidgets.QWidget):
-    def __init__(self, title = "Titel", initial_text = ""):
+    def __init__(self, title = "Verlauf", initial_text = "Die Kommando-Chroniken beginnen hier..."):
         super().__init__()
         self.layout = QtWidgets.QVBoxLayout()
         self.label = QtWidgets.QLabel(title)
+        self.label.setStyleSheet("background-color: #414141; font-size: 18px; padding: 6px; color: white;")
+        self.label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         self.text_edit = QtWidgets.QTextEdit()
         self.text_edit.setReadOnly(True)
         self.text_edit.setStyleSheet("background-color: #414141; color: white; font-size: 16px; border: none;")
-        self.text_edit.setText(initial_text)
+        self.text_edit.setPlainText(initial_text)
         self.layout.addWidget(self.label)
-        self.layout.addWidget(self.text_edit)
+        self.layout.addWidget(self.text_edit, 1)
         self.setLayout(self.layout)
 
     def Anhaengsel(self, new_text):
-        current_text = self.text_edit.toPlainText()
-        updated_text = current_text + "\n" + new_text
-        print(updated_text + "\n\n")
-        self.text_edit.setText(updated_text)
+        if new_text is None:
+            return
+
+        new_text = f"sent: {new_text}"
+        self.text_edit.append(str(new_text))
+
         cursor = self.text_edit.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
         self.text_edit.setTextCursor(cursor)
+
+class FlightStateDisplay(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QtWidgets.QVBoxLayout()
+        self.label = QtWidgets.QLabel("Flight State: N/A")
+        self.label.setStyleSheet("background-color: #414141; font-size: 22px; padding: 10px; color: white;")
+        self.label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+        self.layout.addWidget(self.label)
+        self.setLayout(self.layout)
+
+    def Statuscheckl(self, state, forced = False):
+        try:
+            state = int(state)
+        except (ValueError, TypeError):
+            self.label.setText(f"Flight State: {state}")
+            return
+        if state == 0:
+            state = "INIT"
+        elif state == 1:
+            state = "GNC_ALIGN"
+        elif state == 2:
+            state = "CHECKOUTS"
+        elif state == 3:
+            state = "ARMED"
+        elif state == 4:
+            state = "BURN"
+        elif state == 5:
+            state = "COAST"
+        elif state == 6:
+            state = "AWAIT_DROGUE"
+        elif state == 7:
+            state = "DESCEND_DROGUE"
+        elif state == 8:
+            state = "AWAIT_MAIN"
+        elif state == 9:
+            state = "DESCEND_MAIN"
+        elif state == 10:
+            state = "LANDED"
+        else:
+            state = "UNDEFINED"
+        if forced:
+            self.label.setText(f"Flight State: {state} (forced)")
+        else:
+            self.label.setText(f"Flight State: {state}")
 
 class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der flight data
     def __init__(self):
         super().__init__()
 
-        self.isserious = False
+        self.isserious = True
 
         # ALLGEMEINES...........................................................................
         self.setWindowTitle("ATHMO DataVisualizer")
@@ -346,9 +416,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         main_widget = QtWidgets.QWidget()
         self.layout = QtWidgets.QGridLayout()
         self.setStyleSheet("background-color: rgb(30, 30, 30)")
-        self.title_label = QtWidgets.QLabel("ATHMO GroundStation")
-        self.title_label.setStyleSheet("font-size: 24px; color: white; padding: 10px;")
-        self.layout.addWidget(self.title_label, 0, 1, QtCore.Qt.AlignCenter)
+        self.title_label = QtWidgets.QLabel("GroundControl")
+        self.title_label.setStyleSheet("font-size: 60px; color: #bebebe; padding: 15px; text-align: left;")
+        self.title_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.layout.addWidget(self.title_label, 0, 1)
         self.logo_label = QtWidgets.QLabel()
 
         # Logo einpflegen
@@ -384,6 +455,11 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         # Fenster zu Anzeigen der letzten gesendeten Commands
         self.kommando_fenster = TextFenster("Verlauf")
         self.layout.addWidget(self.kommando_fenster, 5, 0)
+
+        # STATUSANZEIGE.........................................................................
+        # Selbsterklärend, du dulli
+        self.flight_state_display = FlightStateDisplay()
+        self.layout.addWidget(self.flight_state_display, 2, 1)
 
 
 
@@ -649,6 +725,9 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         set_hil_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         radioswitch_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
+        #################### experimentell #####################
+        stateforce_widget.stateforce_kommando.connect(self.flight_state_display.Statuscheckl)
+
         self.OTHER_control = QtWidgets.QGroupBox()
         self.OTHER_control.setStyleSheet(gruppenkostuem + ";border: none;")
         #self.OTHER_control.setTitle("Other Control")
@@ -713,6 +792,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         self.reader = SignalLeseGerät(self.port)
         self.reader.werte_signal.connect(self.Werte_add)
         self.reader.header_signal.connect(self.Header_add)
+        self.reader.status_senden.connect(self.flight_state_display.Statuscheckl)
 
     def start_reader(self):
         if self.reader is None:
@@ -865,8 +945,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
                 widget = WertAnzeigen(graphname_ID1[i])
                 setattr(self, widget_name, widget)
 
-                self.layout.addWidget(widget, valuepos_ID1[i][0], valuepos_ID1[i][1])
-                       
+                self.layout.addWidget(widget, valuepos_ID1[i][0], valuepos_ID1[i][1])               
 
         # ID2 - Power Packet.............................................................................     
         # M1_5V_bus:
