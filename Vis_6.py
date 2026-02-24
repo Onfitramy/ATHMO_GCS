@@ -32,7 +32,7 @@ class GraphErstellen(QtWidgets.QWidget): # Plottet einen Graphen
         self.setLayout(self.layout)
 
         # Formatierung der Achsen
-        color = "w"
+        color = "w" # Kommentar
         self.canvas.getAxis("left").setTextPen(color)
         self.canvas.getAxis("bottom").setTextPen(color)
 
@@ -127,6 +127,7 @@ class SignalLeseGerät(QtCore.QThread):
         self.wait()
 
 class ActionButton(QtWidgets.QDialog):
+    kommando_senden = QtCore.pyqtSignal(str)
     def __init__(self, cat = None, command = None, style = None, port = None, mode = None):    # cat: Kategorie, text: Button-Text, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
         super().__init__()
         self.cat = cat
@@ -224,11 +225,13 @@ class ActionButton(QtWidgets.QDialog):
                 port = serial.Serial(self.port, 9600, timeout = 1)
             if port.is_open:
                 port.write((self.befehl + "\n").encode())
+                self.kommando_senden.emit(self.befehl)
                 print("Kommando gegeben o7", self.befehl)
         except Exception as e:
             print("Fehler beim Senden:", e)
 
 class InputActionButton(QtWidgets.QDialog):
+    kommando_senden = QtCore.pyqtSignal(str)
     def __init__(self, cat = None, command = None, style = None, port = None, size = None, isserious = True):    # cat: Kategorie, command: zu sendender Befehl, style: StyleSheet, port: serieller Port, mode: "redgreen" für Toggle-Button
         super().__init__()
         #### Breite der Knöpfe: 356 px
@@ -274,6 +277,7 @@ class InputActionButton(QtWidgets.QDialog):
                 return
             if port.is_open:
                 port.write((befehl + "\n").encode())
+                self.kommando_senden.emit(befehl)
                 print("Kommando gegeben o7 ", befehl)
             else:
                 print("Nö")
@@ -295,6 +299,28 @@ class WertAnzeigen(QtWidgets.QWidget): # Dient zur Anzeige von (variablen) Werte
     def update_value(self, variable_name, value=0, unit="[ ]"): # Aktualisiert die Anzeige eines Wertes
         self.label.setText(f"{variable_name}:\n{value}{unit}")
 
+class TextFenster(QtWidgets.QWidget):
+    def __init__(self, title = "Titel", initial_text = ""):
+        super().__init__()
+        self.layout = QtWidgets.QVBoxLayout()
+        self.label = QtWidgets.QLabel(title)
+        self.text_edit = QtWidgets.QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setStyleSheet("background-color: #414141; color: white; font-size: 16px; border: none;")
+        self.text_edit.setText(initial_text)
+        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.text_edit)
+        self.setLayout(self.layout)
+
+    def Anhaengsel(self, new_text):
+        current_text = self.text_edit.toPlainText()
+        updated_text = current_text + "\n" + new_text
+        print(updated_text + "\n\n")
+        self.text_edit.setText(updated_text)
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        self.text_edit.setTextCursor(cursor)
+
 class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der flight data
     def __init__(self):
         super().__init__()
@@ -314,7 +340,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
             self.setWindowIcon(QtGui.QIcon(icon_path))
         
 
-        self.port = serial.Serial("COM5", 9600, timeout = 1)
+        self.port = serial.Serial("COM3", 9600, timeout = 1)
         self.reader = None
 
         main_widget = QtWidgets.QWidget()
@@ -352,7 +378,16 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         # Start/Stop-Widget hinzufügen
         startknopfistyle = "font-size: 18px; color: white; background-color: #5eaea3;"
         self.startstop_widget = StartKnopfi(startknopfistyle)
-        self.layout.addWidget(self.startstop_widget, 2, 0)       
+        self.layout.addWidget(self.startstop_widget, 2, 0)
+
+        # TEXTFENSTER...........................................................................
+        # Fenster zu Anzeigen der letzten gesendeten Commands
+        self.kommando_fenster = TextFenster("Verlauf")
+        self.layout.addWidget(self.kommando_fenster, 5, 0)
+
+
+
+
 
         # -----------aktuelle Commands--------------
         # cls: Clears screen                                                                                    für GS nicht relevant
@@ -406,6 +441,11 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         cam_skipdate_widget =  ActionButton("Skip date",        "Camera_SkipDate",   knopfistyle, self.port            )
         cam_wifi_widget     =  ActionButton("Camera WiFi",      "Camera_Wifi",       knopfistyle, self.port, "redgreen")
 
+        cam_pow_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        cam_rec_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        cam_skipdate_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        cam_wifi_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+
         self.CAM_control = QtWidgets.QGroupBox()
         self.CAM_control.setStyleSheet(gruppenkostuem + ";border: none;")
         #self.CAM_control.setTitle("Camera Control")
@@ -434,6 +474,9 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         reset_primary_widget   = ActionButton("Reset Primary",   "RESET_PRIMARY",   knopfistyle, self.port)
         reset_secondary_widget = ActionButton("Reset Secondary", "RESET_SECONDARY", knopfistyle, self.port)
 
+        reset_primary_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        reset_secondary_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+
         self.RESET_control = QtWidgets.QGroupBox()
         self.RESET_control.setStyleSheet(gruppenkostuem + ";border: none;")
         #self.RESET_control.setTitle("Reset Control")
@@ -447,6 +490,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         cli_mode_widget       = ActionButton("CLI Mode",        "switchCLIMode",      knopfistyle, self.port, "int_ext")
         serialdata_widget     = ActionButton("Serial Data",     "switchSerialData",   knopfistyle, self.port, "redgreen")
         grounddata_widget     = ActionButton("Ground Data",     "switchGroundData",   knopfistyle, self.port, "redgreen")
+
+        cli_mode_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        serialdata_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        grounddata_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.Data_control = QtWidgets.QGroupBox()
         self.Data_control.setStyleSheet(gruppenkostuem + ";border: none;")
@@ -481,6 +528,14 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         spark_targetpositionmode_widget = ActionButton("Target Position Mode", "SPARK_TargetPositionMode", knopfistyle, self.port)
         spark_targetspeedmode_widget    = ActionButton("Target Speed Mode", "SPARK_TargetSpeedMode", knopfistyle, self.port)
 
+        spark_setangle_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_setspeed_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_exitmode_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_zerostepper_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_findmax_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_targetpositionmode_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        spark_targetspeedmode_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+
         self.SPARK_control = QtWidgets.QGroupBox()
         self.SPARK_control.setStyleSheet(gruppenkostuem + ";border: none;")
         #self.SPARK_control.setTitle("SPARK Control")
@@ -514,6 +569,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         pu_setrecovery_widget = ActionButton("Recovery Power", "PU_setRecoveryPower", knopfistyle, self.port, "redgreen")
         pu_setacs_widget      = ActionButton("ACS Power",      "PU_setACSPower",      knopfistyle, self.port, "redgreen")
 
+        pu_setcam_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        pu_setrecovery_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        pu_setacs_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+
         self.PU_control = QtWidgets.QGroupBox()
         self.PU_control.setStyleSheet(gruppenkostuem + ";border: none;")
         #self.PU_control.setTitle("Power Unit Control")
@@ -544,6 +603,12 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         sound_playsong_widget       = InputActionButton("Play Song", "Buzzer_PlaySong", knopfistyle, self.port, self.size, self.isserious)
         sound_playsongrepeat_widget = InputActionButton("Play Song Repeat", "Buzzer_PlaySongRepeat", knopfistyle, self.port, self.size, self.isserious)
         sound_stop_widget          = ActionButton("SEI LEISE", "Buzzer_Stop", knopfistyle, self.port)
+
+        sound_stop_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        sound_playcnote_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        sound_playnote_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        sound_playsong_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        sound_playsongrepeat_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.SOUND_control = QtWidgets.QGroupBox()
         self.SOUND_control.setStyleSheet(gruppenkostuem + ";border: none;")
@@ -577,6 +642,12 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         loggingflightdataout_widget = ActionButton("Logging Flight Data Out", "Logging_FlightDataOut", knopfistyle, self.port, "redgreen")
         set_hil_widget = ActionButton("Set HIL", "Set_HIL", knopfistyle, self.port, "redgreen")
         radioswitch_widget = ActionButton("Radio Switch", "Radio_Switch", knopfistyle, self.port, "nrf_xbee")
+
+        stateforce_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        simulateevent_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        loggingflightdataout_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        set_hil_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
+        radioswitch_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.OTHER_control = QtWidgets.QGroupBox()
         self.OTHER_control.setStyleSheet(gruppenkostuem + ";border: none;")
