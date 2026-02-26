@@ -13,20 +13,24 @@ import ctypes as ctype
 
 pg.setConfigOptions(useOpenGL=False)
 
+# Port in Zeile 433 bzw am Beginn der Klasse FlightDataWindow
+# Anpassen falls nötig, siehe Geräte-Manager - serielles USB-Gerät
+
 class GraphErstellen(QtWidgets.QWidget): # Plottet einen Graphen
     def __init__(self, title = "Titel"):
         super().__init__()
         self.canvas = pg.PlotWidget()
         # Festlegen der Hintergrundfarbe des Graphen
-        self.canvas.setBackground("#414141") # Setzt die Hintergrundfarbe des Graphen
-        #self.ax.set_facecolor("#313131FF")  # Setzt die Hintergrundfarbe des Graphen innen
         self.canvas.showGrid(x=True, y=True, alpha=0.3)
         self.canvas.setTitle(title, color = "white", size = "16pt")
         self.canvas.getAxis("left").setTextPen("w")
         self.canvas.getAxis("bottom").setTextPen("w")
+        self.canvas.setBackground("#414141")
+        self.canvas.setStyleSheet("; padding: 4px 8px;")
 
         self.layout = QtWidgets.QGridLayout()
-        self.layout.setContentsMargins(10,10,10,10)  # Abstand vom Graph zum Rand des Widgets	 
+        self.layout.setContentsMargins(0,0,0,0)  # Abstand vom Graph zum Rand des Widgets
+        self.setStyleSheet("border-radius: 4px;")	 # funktioniert nicht
         # Hinzufügen des Graphen zum Layout
         self.layout.addWidget(self.canvas)
         self.setLayout(self.layout)
@@ -120,7 +124,12 @@ class SignalLeseGerät(QtCore.QThread):
                             try:    
                                 self.status_senden.emit(daten_zeilenweise[4])
                             except Exception as e:
-                                print("Fehler beim Senden des Status:", e)
+                                print("ID1: Fehler beim Senden des Status:", e)
+                        if id == 17:
+                            try:
+                                self.header_signal.emit(daten_zeilenweise[2])
+                            except Exception as e:
+                                print("ID17: Fehler beim Senden des Headers:", e)
 
 
 
@@ -291,13 +300,9 @@ class InputActionButton(QtWidgets.QDialog):
             if port.is_open:
                 port.write((befehl + "\n").encode())
                 self.kommando_senden.emit(befehl)
-                
-############################################################## experimentell ################
-
+                ######### experimentell: #########
                 if self.command == "State_Force":
                     self.stateforce_kommando.emit(eingegebener_wert, True)
-
-#########################################################################
 
                 print("Kommando gegeben o7 ", befehl)
             else:
@@ -308,28 +313,54 @@ class InputActionButton(QtWidgets.QDialog):
 class WertAnzeigen(QtWidgets.QWidget): # Dient zur Anzeige von (variablen) Werten ohne zeitlichen Verlauf
     def __init__(self, name = ""):
         super().__init__()
-        self.layout = QtWidgets.QVBoxLayout()
+
+        self.setStyleSheet("background-color: #414141;")
+
+        self.layout = QtWidgets.QHBoxLayout()
+        self.layout.setContentsMargins(8, 4, 8, 4)
+        self.layout.setSpacing(0)
+
         self.label = QtWidgets.QLabel()
+        self.label.setStyleSheet("font-size: 22px; padding: 6px 10px; color: white; border: none; border-radius: 4px;")
+        self.label.setAlignment(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft)
+
+        self.display = QtWidgets.QLabel()
+        self.display.setStyleSheet("background-color: #343434; font-size: 22px; padding: 6px 12px; "
+            "color: white; border-radius: 4px; margin-left: 8px;")
+        self.display.setAlignment(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight)
 
         if name:
-            self.label.setText(f"{name}:\n")
+            self.label.setText(f"{name}:")
 
         self.layout.addWidget(self.label)
+        self.layout.addWidget(self.display, stretch=1)
         self.setLayout(self.layout)
 
     def update_value(self, variable_name, value=0, unit="[ ]"): # Aktualisiert die Anzeige eines Wertes
-        self.label.setText(f"{variable_name}:\n{value}{unit}")
-
+        # Links steht der Name, rechts der aktuelle Wert im dunkleren Feld
+        self.label.setText(f"{variable_name}:")
+        self.display.setText(f"{value}{unit}")
+        
 class TextFenster(QtWidgets.QWidget):
-    def __init__(self, title = "Verlauf", initial_text = "Die Kommando-Chroniken beginnen hier..."):
+    def __init__(self, title = "Verlauf", isserious = True):
         super().__init__()
+        self.isserious = isserious
+        self.setStyleSheet("background-color: #414141;")
         self.layout = QtWidgets.QVBoxLayout()
+        self.layout.setContentsMargins(6, 6, 6, 6)
+        self.layout.setSpacing(4)
+
         self.label = QtWidgets.QLabel(title)
-        self.label.setStyleSheet("background-color: #414141; font-size: 18px; padding: 6px; color: white;")
+        self.label.setStyleSheet("background-color: #414141; font-size: 18px; padding: 6px 10px; color: white; border-radius: 4px;")
         self.label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
         self.text_edit = QtWidgets.QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setStyleSheet("background-color: #414141; color: white; font-size: 16px; border: none;")
+        self.text_edit.setStyleSheet("background-color: #414141; color: white; font-size: 16px; border: none; border-radius: 4px; padding: 8px;")
+        if self.isserious:
+            initial_text = "Anleitung zum Start:\n1. Startknopf drücken\n2. Data/ Mode Control - Ground Data ON\n3. CLI Data muss auf STANDBY/OFF sein\n"
+        else:
+            initial_text = "Anleitung zum Start:\n1. Startknopf drücken\n2. Data/ Mode Control - Ground Data ON\n3. CLI Data muss auf STANDBY/OFF sein\n4. Kriegsverbrechen im Kosovo begehen o7"
         self.text_edit.setPlainText(initial_text)
         self.layout.addWidget(self.label)
         self.layout.addWidget(self.text_edit, 1)
@@ -338,10 +369,8 @@ class TextFenster(QtWidgets.QWidget):
     def Anhaengsel(self, new_text):
         if new_text is None:
             return
-
-        new_text = f"sent: {new_text}"
+        new_text = f"{new_text} sent"
         self.text_edit.append(str(new_text))
-
         cursor = self.text_edit.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
         self.text_edit.setTextCursor(cursor)
@@ -349,10 +378,15 @@ class TextFenster(QtWidgets.QWidget):
 class FlightStateDisplay(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.layout = QtWidgets.QVBoxLayout()
+        self.setStyleSheet("background-color: #414141;")
+        self.layout = QtWidgets.QHBoxLayout()
+        self.layout.setContentsMargins(8, 4, 8, 4)
+        self.layout.setSpacing(0)
+
         self.label = QtWidgets.QLabel("Flight State: N/A")
-        self.label.setStyleSheet("background-color: #414141; font-size: 22px; padding: 10px; color: white;")
+        self.label.setStyleSheet("font-size: 22px; color: white; border: none; border-radius: 4px;")
         self.label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+
         self.layout.addWidget(self.label)
         self.setLayout(self.layout)
 
@@ -363,31 +397,43 @@ class FlightStateDisplay(QtWidgets.QWidget):
             self.label.setText(f"Flight State: {state}")
             return
         if state == 0:
-            state = "INIT"
+            state = "FLIGHT_ABORT"
         elif state == 1:
-            state = "GNC_ALIGN"
+            state = "FLIGHT_STARTUP"
         elif state == 2:
-            state = "CHECKOUTS"
+            state = "FLIGHT_INIT"
         elif state == 3:
-            state = "ARMED"
+            state = "FLIGHT_GNC_ALIGN"
         elif state == 4:
-            state = "BURN"
+            state = "FLIGHT_CHECKOUTS"
         elif state == 5:
-            state = "COAST"
+            state = "FLIGHT_ARMED"
         elif state == 6:
-            state = "AWAIT_DROGUE"
+            state = "FLIGHT_BURN"
         elif state == 7:
-            state = "DESCEND_DROGUE"
+            state = "FLIGHT_COAST"
         elif state == 8:
-            state = "AWAIT_MAIN"
+            state = "FLIGHT_AWAIT_DROGUE"
         elif state == 9:
-            state = "DESCEND_MAIN"
+            state = "FLIGHT_DESCENT_DROGUE"
         elif state == 10:
-            state = "LANDED"
+            state = "FLIGHT_AWAIT_MAIN"
+        elif state == 11:
+            state = "FLIGHT_DESCENT_MAIN"
+        elif state == 12:
+            state = "FLIGHT_LANDED"
+        elif state == 13:
+            state = "TEST_INIT"
+        elif state == 14:
+            state = "TEST_CALIB"
+        elif state == 15:
+            state = "GROUNDSTATION"
+        elif state == 16:
+            state = "MAX"
         else:
             state = "UNDEFINED"
         if forced:
-            self.label.setText(f"Flight State: {state} (forced)")
+            self.label.setText(f"Flight State: {state} [forced]")
         else:
             self.label.setText(f"Flight State: {state}")
 
@@ -408,7 +454,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
             icon_path = os.path.join(base_dir, "JoharnesSchnitt.jpg.jpg.ICO")
         if os.path.isfile(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
-        
+
+        ##############################################################################################################################################################
+        ########################################################################PORT##################################################################################
+        ##############################################################################################################################################################
 
         self.port = serial.Serial("COM3", 9600, timeout = 1)
         self.reader = None
@@ -453,8 +502,8 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
 
         # TEXTFENSTER...........................................................................
         # Fenster zu Anzeigen der letzten gesendeten Commands
-        self.kommando_fenster = TextFenster("Verlauf")
-        self.layout.addWidget(self.kommando_fenster, 5, 0)
+        self.kommando_fenster = TextFenster("Verlauf", self.isserious)
+        self.layout.addWidget(self.kommando_fenster, 4, 0)
 
         # STATUSANZEIGE.........................................................................
         # Selbsterklärend, du dulli
@@ -509,7 +558,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         knopfistyle = "font-size: 14px; color: white; background-color: #5eaea3;"
 
         # PANELS +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+++-+-+-+--+-+-+-+-+-+-+
-        gruppenkostuem = "font-size: 18px; color: white; background-color: #414141; font-weight: bold; padding: 10px"
+        gruppenkostuem = "font-size: 18px; color: white; background-color: #414141; font-weight: bold; padding: 10px; border: 2px solid #696969; border-radius: 4px;"
 
         # KAMERAPanel -----------------------------
         cam_pow_widget      =  ActionButton("Camera Power",     "Camera_Power",      knopfistyle, self.port, "redgreen")
@@ -523,19 +572,17 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         cam_wifi_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.CAM_control = QtWidgets.QGroupBox()
-        self.CAM_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.CAM_control.setTitle("Camera Control")
+        self.CAM_control.setStyleSheet(gruppenkostuem)
         CAM_control_layout = QtWidgets.QVBoxLayout()
         CAM_control_layout.addWidget(cam_pow_widget)
         CAM_control_layout.addWidget(cam_rec_widget)
         CAM_control_layout.addWidget(cam_skipdate_widget)
         CAM_control_layout.addWidget(cam_wifi_widget)
         self.CAM_control.setLayout(CAM_control_layout)
-        #self.layout.addWidget(self.CAM_control, 3, 0)
 
         CAM_control_tool = QtWidgets.QToolButton()
         CAM_control_tool.setText("Camera Control ▼")
-        CAM_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        CAM_control_tool.setStyleSheet(gruppenkostuem)
         CAM_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         CAM_menu = QtWidgets.QMenu(CAM_control_tool)
@@ -544,7 +591,6 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         CAM_menu.addAction(wa)
         CAM_control_tool.setMenu(CAM_menu)
 
-        #self.layout.addWidget(CAM_control_tool, 3, 0)
 
         # RESETPanel -----------------------------
         reset_primary_widget   = ActionButton("Reset Primary",   "RESET_PRIMARY",   knopfistyle, self.port)
@@ -554,13 +600,11 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         reset_secondary_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.RESET_control = QtWidgets.QGroupBox()
-        self.RESET_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.RESET_control.setTitle("Reset Control")
+        self.RESET_control.setStyleSheet(gruppenkostuem)
         RESET_control_layout = QtWidgets.QVBoxLayout()
         RESET_control_layout.addWidget(reset_primary_widget)
         RESET_control_layout.addWidget(reset_secondary_widget)
         self.RESET_control.setLayout(RESET_control_layout)
-        #self.layout.addWidget(self.RESET_control, 3, 3)
 
         # DATAPanel -----------------------------
         cli_mode_widget       = ActionButton("CLI Mode",        "switchCLIMode",      knopfistyle, self.port, "int_ext")
@@ -572,18 +616,16 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         grounddata_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.Data_control = QtWidgets.QGroupBox()
-        self.Data_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.Data_control.setTitle("Data Control")
+        self.Data_control.setStyleSheet(gruppenkostuem)
         Data_control_layout = QtWidgets.QVBoxLayout()
         Data_control_layout.addWidget(cli_mode_widget)
         Data_control_layout.addWidget(serialdata_widget)
         Data_control_layout.addWidget(grounddata_widget)
         self.Data_control.setLayout(Data_control_layout)
-        #self.layout.addWidget(self.Data_control, 4, 0)
 
         Data_control_tool = QtWidgets.QToolButton()
         Data_control_tool.setText("Data/ Mode Control ▼")
-        Data_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        Data_control_tool.setStyleSheet(gruppenkostuem)
         Data_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         Data_menu = QtWidgets.QMenu(Data_control_tool)
@@ -591,8 +633,6 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         wa.setDefaultWidget(self.Data_control)
         Data_menu.addAction(wa)
         Data_control_tool.setMenu(Data_menu)
-
-        #self.layout.addWidget(Data_control_tool, 4, 0)
 
 
         # SPARKPanel ---------------------------
@@ -613,8 +653,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         spark_targetspeedmode_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.SPARK_control = QtWidgets.QGroupBox()
-        self.SPARK_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.SPARK_control.setTitle("SPARK Control")
+        self.SPARK_control.setStyleSheet(gruppenkostuem)
         SPARK_control_layout = QtWidgets.QVBoxLayout()
         SPARK_control_layout.addWidget(spark_setangle_widget)
         SPARK_control_layout.addWidget(spark_setspeed_widget)
@@ -624,11 +663,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         SPARK_control_layout.addWidget(spark_targetpositionmode_widget)
         SPARK_control_layout.addWidget(spark_targetspeedmode_widget)
         self.SPARK_control.setLayout(SPARK_control_layout)
-        #self.layout.addWidget(self.SPARK_control, 3, 3)
 
         SPARK_control_tool = QtWidgets.QToolButton()
         SPARK_control_tool.setText("SPARK Control ▼")
-        SPARK_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        SPARK_control_tool.setStyleSheet(gruppenkostuem)
         SPARK_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         SPARK_menu = QtWidgets.QMenu(SPARK_control_tool)
@@ -636,8 +674,6 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         wa.setDefaultWidget(self.SPARK_control)
         SPARK_menu.addAction(wa)
         SPARK_control_tool.setMenu(SPARK_menu)
-
-        #self.layout.addWidget(SPARK_control_tool, 3, 3)
 
 
         # PUPanel -----------------------------
@@ -650,18 +686,16 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         pu_setacs_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.PU_control = QtWidgets.QGroupBox()
-        self.PU_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.PU_control.setTitle("Power Unit Control")
+        self.PU_control.setStyleSheet(gruppenkostuem)
         PU_control_layout = QtWidgets.QVBoxLayout()
         PU_control_layout.addWidget(pu_setcam_widget)
         PU_control_layout.addWidget(pu_setrecovery_widget)
         PU_control_layout.addWidget(pu_setacs_widget)
         self.PU_control.setLayout(PU_control_layout)
-        #self.layout.addWidget(self.PU_control, 4, 3)
 
         PU_control_tool = QtWidgets.QToolButton()
         PU_control_tool.setText("Power Unit Control ▼")
-        PU_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        PU_control_tool.setStyleSheet(gruppenkostuem)
         PU_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         PU_menu = QtWidgets.QMenu(PU_control_tool)
@@ -669,8 +703,6 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         wa.setDefaultWidget(self.PU_control)
         PU_menu.addAction(wa)
         PU_control_tool.setMenu(PU_menu)
-
-        #self.layout.addWidget(PU_control_tool, 4, 3)
 
 
         # SOUNDPanel ----------------------------
@@ -687,8 +719,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         sound_playsongrepeat_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.SOUND_control = QtWidgets.QGroupBox()
-        self.SOUND_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.SOUND_control.setTitle("Sound Control")
+        self.SOUND_control.setStyleSheet(gruppenkostuem)
         SOUND_control_layout = QtWidgets.QVBoxLayout()
         SOUND_control_layout.addWidget(sound_playcnote_widget)
         SOUND_control_layout.addWidget(sound_playnote_widget)
@@ -697,11 +728,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         SOUND_control_layout.addWidget(sound_stop_widget)
     
         self.SOUND_control.setLayout(SOUND_control_layout)
-        #self.layout.addWidget(self.SOUND_control, 4, 1)
 
         SOUND_control_tool = QtWidgets.QToolButton()
         SOUND_control_tool.setText("Sound Control ▼")
-        SOUND_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        SOUND_control_tool.setStyleSheet(gruppenkostuem)
         SOUND_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         SOUND_menu = QtWidgets.QMenu(SOUND_control_tool)
@@ -709,8 +739,6 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         wa.setDefaultWidget(self.SOUND_control)
         SOUND_menu.addAction(wa)
         SOUND_control_tool.setMenu(SOUND_menu)
-
-        #self.layout.addWidget(SOUND_control_tool, 5, 0)
 
         # SONSTIGESPanel----------------------------
         stateforce_widget = InputActionButton("Force State", "State_Force", knopfistyle, self.port, self.size, self.isserious)
@@ -724,13 +752,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         loggingflightdataout_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         set_hil_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         radioswitch_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
-
-        #################### experimentell #####################
         stateforce_widget.stateforce_kommando.connect(self.flight_state_display.Statuscheckl)
 
         self.OTHER_control = QtWidgets.QGroupBox()
-        self.OTHER_control.setStyleSheet(gruppenkostuem + ";border: none;")
-        #self.OTHER_control.setTitle("Other Control")
+        self.OTHER_control.setStyleSheet(gruppenkostuem)
         OTHER_control_layout = QtWidgets.QVBoxLayout()
         OTHER_control_layout.addWidget(stateforce_widget)
         OTHER_control_layout.addWidget(simulateevent_widget)
@@ -738,11 +763,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         OTHER_control_layout.addWidget(set_hil_widget)
         OTHER_control_layout.addWidget(radioswitch_widget)
         self.OTHER_control.setLayout(OTHER_control_layout)
-        #self.layout.addWidget(self.OTHER_control, 5, 1)
 
         OTHER_control_tool = QtWidgets.QToolButton()
         OTHER_control_tool.setText("Other Control ▼")
-        OTHER_control_tool.setStyleSheet(gruppenkostuem + "; border: none;")
+        OTHER_control_tool.setStyleSheet(gruppenkostuem)
         OTHER_control_tool.setPopupMode(QtWidgets.QToolButton.InstantPopup)
 
         OTHER_menu = QtWidgets.QMenu(OTHER_control_tool)
@@ -751,11 +775,9 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         OTHER_menu.addAction(wa)
         OTHER_control_tool.setMenu(OTHER_menu)
 
-        #self.layout.addWidget(OTHER_control_tool, 5, 1)
-
         # ZUSAMMENFASSENDESPanel-------------------------#
         self.TOTAL_control = QtWidgets.QGroupBox()
-        self.TOTAL_control.setStyleSheet(gruppenkostuem + ";border: none;")
+        self.TOTAL_control.setStyleSheet(gruppenkostuem + ";border: none; border-radius: 4px;")    
         total_control_layout = QtWidgets.QGridLayout()
         total_control_layout.addWidget(CAM_control_tool,    1, 0)
         total_control_layout.addWidget(Data_control_tool,   0, 1)
@@ -763,6 +785,8 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         total_control_layout.addWidget(PU_control_tool,     0, 0)
         total_control_layout.addWidget(SOUND_control_tool,  2, 0)
         total_control_layout.addWidget(OTHER_control_tool,  2, 1)
+
+        total_control_layout.setContentsMargins(0, 0, 0, 0)
 
         self.TOTAL_control.setLayout(total_control_layout)
         self.layout.addWidget(self.TOTAL_control, 3, 0)
@@ -930,7 +954,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         graphview_ID1 = [self.view_statusflag, self.view_sensorstatusflags, self.view_state]
         valueview_ID1 = [self.view_value_statusflag, self.view_value_sensorstatusflags, self.view_value_state]
         valuepos_ID1 = [self.pos_value_statusflag, self.pos_value_sensorstatusflags, self.pos_value_state]
-        graphname_ID1 = self.Datenstruktur(1)[0][2:len(self.Datenstruktur(1)[0])-1]
+        graphname_ID1 = self.Datenstruktur(1)[0][2:]
 
         # Auswahl der anzuzeigenden Graphen:
         for i in range(len(graphview_ID1)):
@@ -1143,17 +1167,17 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         self.view_value_IMU1_z_gyro = False
         self.pos_value_IMU1_z_gyro = [0, 0]
         # magX:
-        self.view_magX = True
+        self.view_magX = False
         self.pos_magX = [3, 1]
-        self.view_value_magX = True   
+        self.view_value_magX = False   
         self.pos_value_magX = [4, 0]
         # magY:
-        self.view_magY = True
+        self.view_magY = False
         self.pos_magY = [4, 1]
         self.view_value_magY = False    
         self.pos_value_magY = [0, 0]
         # magZ:
-        self.view_magZ = True
+        self.view_magZ = False
         self.pos_magZ = [5, 1]
         self.view_value_magZ = False    
         self.pos_value_magZ = [0, 0]
@@ -1354,17 +1378,17 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
 
         # ID7 - Attitude Packet
         # phi:
-        self.view_phi = True
+        self.view_phi = False
         self.pos_phi = [3, 2]
         self.view_value_phi = False
         self.pos_value_phi = [0, 0]
         # theta:
-        self.view_theta = True
+        self.view_theta = False
         self.pos_theta = [4, 2]
         self.view_value_theta = False
         self.pos_value_theta = [0, 0]
         # psi:
-        self.view_psi = True
+        self.view_psi = False
         self.pos_psi = [5, 2]   
         self.view_value_psi = False
         self.pos_value_psi = [0, 0]
@@ -1446,13 +1470,13 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         self.view_value_P33 = False
         self.pos_value_P33 = [0, 0]
         # EKF2_Height:
-        self.view_EKF2_Height = False
-        self.pos_EKF2_Height = [0, 0] 
+        self.view_EKF2_Height = True
+        self.pos_EKF2_Height = [3, 1] 
         self.view_value_EKF2_Height = False
         self.pos_value_EKF2_Height = [0, 0]
         # EKF2_vel:
-        self.view_EKF2_vel = False
-        self.pos_EKF2_vel = [0, 0] 
+        self.view_EKF2_vel = True
+        self.pos_EKF2_vel = [4, 1] 
         self.view_value_EKF2_vel = False
         self.pos_value_EKF2_vel = [0, 0]
         # EKF2_refPres:
@@ -1475,7 +1499,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         valuepos_ID8 = [self.pos_value_P11, self.pos_value_P22, self.pos_value_P33, self.pos_value_EKF2_Height,
                          self.pos_value_EKF2_vel, self.pos_value_EKF2_refPres, self.pos_value_unused1_id8]
         graphname_ID8 = self.Datenstruktur(8)[0][2:len(self.Datenstruktur(8)[0])-1]
-
+        
         # Auswahl der anzuzeigenden Graphen:
         for i in range(len(graphview_ID8)):
             if graphview_ID8[i] and not graphpos_ID8[i] == [0, 0]:
@@ -1490,6 +1514,141 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
                 setattr(self, widget_name, widget)
 
                 self.layout.addWidget(widget, valuepos_ID8[i][0], valuepos_ID8[i][1])
+    
+        # ID9 - SPARK Packet
+        # magAngle:
+        self.view_magAngle = True
+        self.pos_magAngle = [4, 2]
+        self.view_value_magAngle = False
+        self.pos_value_magAngle = [0, 0]
+        # posDeviation:
+        self.view_posDeviation = False
+        self.pos_posDeviation = [0, 0]
+        self.view_value_posDeviation = False
+        self.pos_value_posDeviation = [0, 0]
+        # volt_driver:
+        self.view_volt_driver = False
+        self.pos_volt_driver = [0, 0]
+        self.view_value_volt_driver = False
+        self.pos_value_volt_driver = [0, 0]
+        # temp_NCT1:
+        self.view_temp_NCT1 = False
+        self.pos_temp_NCT1 = [0, 0]
+        self.view_value_temp_NCT1 = False
+        self.pos_value_temp_NCT1 = [0, 0]
+        # temp_NCT2:
+        self.view_temp_NCT2 = False
+        self.pos_temp_NCT2 = [0, 0]
+        self.view_value_temp_NCT2 = False
+        self.pos_value_temp_NCT2 = [0, 0]
+        # SPARK_status:
+        self.view_SPARK_status = False
+        self.pos_SPARK_status = [0, 0]
+        self.view_value_SPARK_status = False
+        self.pos_value_SPARK_status = [0, 0]
+        # unused15:
+        self.view_unused15_id9 = False
+        self.pos_unused15_id9 = [0, 0]
+        self.view_value_unused15_id9 = False
+        self.pos_value_unused15_id9 = [0, 0]
+
+        graphpos_ID9 = [self.pos_magAngle, self.pos_posDeviation, self.pos_volt_driver, self.pos_temp_NCT1,
+                        self.pos_temp_NCT2, self.pos_SPARK_status, self.pos_unused15_id9]
+        graphview_ID9 = [self.view_magAngle, self.view_posDeviation, self.view_volt_driver, self.view_temp_NCT1,
+                         self.view_temp_NCT2, self.view_SPARK_status, self.view_unused15_id9]
+        valueview_ID9 = [self.view_value_magAngle, self.view_value_posDeviation, self.view_value_volt_driver, self.view_value_temp_NCT1,
+                         self.view_value_temp_NCT2, self.view_value_SPARK_status, self.view_value_unused15_id9]
+        valuepos_ID9 = [self.pos_value_magAngle, self.pos_value_posDeviation, self.pos_value_volt_driver, self.pos_value_temp_NCT1,
+                         self.pos_value_temp_NCT2, self.pos_value_SPARK_status, self.pos_value_unused15_id9]
+        graphname_ID9 = self.Datenstruktur(9)[0][2:len(self.Datenstruktur(9)[0])-1]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID9)):
+            if graphview_ID9[i] and not graphpos_ID9[i] == [0, 0]:
+                widget_name = f"graph_9_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID9[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID9[i][0], graphpos_ID9[i][1])
+            if valueview_ID9[i]:
+                widget_name = f"wertanzeige_9_{i+1}_widget"
+                widget = WertAnzeigen(graphname_ID9[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, valuepos_ID9[i][0], valuepos_ID9[i][1])
+        
+        # ID10 - MPC Info
+        # MPC_freq:
+        self.view_MPC_freq = False
+        self.pos_MPC_freq = [0, 0]
+        self.view_value_MPC_freq = True
+        self.pos_value_MPC_freq = [2, 2]
+        # Airbrake_deflection_angle:
+        self.view_Airbrake_deflection_angle = False
+        self.pos_Airbrake_deflection_angle = [0, 0]
+        self.view_value_Airbrake_deflection_angle = False
+        self.pos_value_Airbrake_deflection_angle = [0, 0]
+        # Target_angle:
+        self.view_Target_angle = True
+        self.pos_Target_angle = [3, 2]
+        self.view_value_Target_angle = False
+        self.pos_value_Target_angle = [0, 0]
+
+        graphpos_ID10 = [self.pos_MPC_freq, self.pos_Airbrake_deflection_angle, self.pos_Target_angle]
+        graphview_ID10 = [self.view_MPC_freq, self.view_Airbrake_deflection_angle, self.view_Target_angle]
+        valueview_ID10 = [self.view_value_MPC_freq, self.view_value_Airbrake_deflection_angle, self.view_value_Target_angle]
+        valuepos_ID10 = [self.pos_value_MPC_freq, self.pos_value_Airbrake_deflection_angle, self.pos_value_Target_angle]
+        graphname_ID10 = self.Datenstruktur(10)[0][2:]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID10)):
+            if graphview_ID10[i] and not graphpos_ID10[i] == [0, 0]:
+                widget_name = f"graph_10_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID10[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID10[i][0], graphpos_ID10[i][1])
+            if valueview_ID10[i]:
+                widget_name = f"wertanzeige_10_{i+1}_widget"
+                widget = WertAnzeigen(graphname_ID10[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, valuepos_ID10[i][0], valuepos_ID10[i][1])
+
+        # ID17 - State
+        # state:
+        self.view_state = False
+        self.pos_state = [0, 0]
+        self.view_value_state = False
+        self.pos_value_state = [0, 0]
+
+        graphpos_ID17 = [self.pos_state]
+        graphview_ID17 = [self.view_state]
+        valueview_ID17 = [self.view_value_state]
+        valuepos_ID17 = [self.pos_value_state]
+        graphname_ID17 = self.Datenstruktur(17)[0][2:]
+
+        # Auswahl der anzuzeigenden Graphen:
+        for i in range(len(graphview_ID17)):
+            if graphview_ID17[i] and not graphpos_ID17[i] == [0, 0]:
+                widget_name = f"graph_17_{i+1}_widget"
+                widget = GraphErstellen(graphname_ID17[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, graphpos_ID17[i][0], graphpos_ID17[i][1])
+            if valueview_ID17[i]:
+                widget_name = f"wertanzeige_17_{i+1}_widget"
+                widget = WertAnzeigen(graphname_ID17[i])
+                setattr(self, widget_name, widget)
+
+                self.layout.addWidget(widget, valuepos_ID17[i][0], valuepos_ID17[i][1])
+        
+
+
+
+
+
+
 
     def Datenstruktur(self, id):
         # Struktur der Daten:
@@ -1501,7 +1660,10 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         # ID 6 - Position Packet
         # ID 7 - Attitude Packet
         # ID 8 - Kalman Matrix Packet
-        
+        # ID 9 - SPARK Packet
+        # ID 10 - MPC Info
+        # ID 17 - State     -    redundant mit ID1, aber nur State
+
         # INDEXING: in plotwith beschreibt eine etwaige Zahl immer die y-Daten, mit denen geplottet
         #           werden soll. Der Index 1 beschreibt dabei "Time", (bsp.) 2 beschreibt "Status Flags" etc.
         # ACHTUNG: Immer die Indexe von Daten aus dem gleichen Datenpaket verwenden!
@@ -1547,6 +1709,22 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
             scaling = [    1,   1e-3,     1,      1,     1,             1,          1,              1,         1]
             unit = [      "", "Time",  "m²","m²/s²", "Pa²",           "m",      "m/s",           "Pa",         1]
             plotwith = [   1,      1,     1,      1,     1,             1,          1,              1,         1]
+        if id == 9:
+            struktur = ["ID", "Time", "magAngle", "posDeviation", "volt_driver", "temp_NCT1", "temp_NCT2", "SPARK_status", "unused15"]
+            scaling = [    1,   1e-3,          1,              1,             1,           1,           1,              1,          1]
+            unit = [      "",    "s",        "°",            "m",           "V",        "°C",        "°C",             "",         ""]
+            plotwith = [   1,      1,          1,              1,             1,           1,           1,              1,          1]
+        if id == 10:
+            struktur = ["ID", "Time", "MPC_freq", "Airbrake_deflection_angle", "Target_angle"]
+            scaling = [    1,   1e-3,          1,                           1,              1]
+            unit = [      "",    "s",       "Hz",                         "°",            "°"]
+            plotwith = [   1,      1,     "solo",                           1,              1]
+        if id == 17:
+            struktur = ["ID", "Time", "State"]
+            scaling = [    1,   1e-3,       1]
+            unit = [      "",    "s",      ""]
+            plotwith = [   1,      1,       1]
+
         return struktur, scaling, unit, plotwith
 
     def setData(self, x, y, **kwargs):
