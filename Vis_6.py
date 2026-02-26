@@ -127,9 +127,9 @@ class SignalLeseGerät(QtCore.QThread):
                                 print("ID1: Fehler beim Senden des Status:", e)
                         if id == 17:
                             try:
-                                self.header_signal.emit(daten_zeilenweise[2])
+                                self.status_senden.emit(daten_zeilenweise[2])
                             except Exception as e:
-                                print("ID17: Fehler beim Senden des Headers:", e)
+                                print("ID17: Fehler beim Senden des Status:", e)
 
 
 
@@ -459,7 +459,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         ########################################################################PORT##################################################################################
         ##############################################################################################################################################################
 
-        self.port = serial.Serial("COM3", 9600, timeout = 1)
+        self.port = serial.Serial("COM5", 9600, timeout = 1)
         self.reader = None
 
         main_widget = QtWidgets.QWidget()
@@ -746,6 +746,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         loggingflightdataout_widget = ActionButton("Logging Flight Data Out", "Logging_FlightDataOut", knopfistyle, self.port, "redgreen")
         set_hil_widget = ActionButton("Set HIL", "Set_HIL", knopfistyle, self.port, "redgreen")
         radioswitch_widget = ActionButton("Radio Switch", "Radio_Switch", knopfistyle, self.port, "nrf_xbee")
+        switchoutputschedule_widget = InputActionButton("Switch Output Schedule", "switchOutputSchedule", knopfistyle, self.port, self.size, self.isserious)
 
         stateforce_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         simulateevent_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
@@ -753,6 +754,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         set_hil_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         radioswitch_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
         stateforce_widget.stateforce_kommando.connect(self.flight_state_display.Statuscheckl)
+        switchoutputschedule_widget.kommando_senden.connect(self.kommando_fenster.Anhaengsel)
 
         self.OTHER_control = QtWidgets.QGroupBox()
         self.OTHER_control.setStyleSheet(gruppenkostuem)
@@ -762,6 +764,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         OTHER_control_layout.addWidget(loggingflightdataout_widget)
         OTHER_control_layout.addWidget(set_hil_widget)
         OTHER_control_layout.addWidget(radioswitch_widget)
+        OTHER_control_layout.addWidget(switchoutputschedule_widget)
         self.OTHER_control.setLayout(OTHER_control_layout)
 
         OTHER_control_tool = QtWidgets.QToolButton()
@@ -847,7 +850,7 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         for i in range(0, len(self.header)):
             print("HEADER", i, ":", self.header[i])
         
-    def Werte_add(self, daten_zeilenweise, timelimit = 5):  
+    def Werte_add(self, daten_zeilenweise, timelimit = 20):  
 
         try:
             id = int(daten_zeilenweise[0])
@@ -1579,9 +1582,9 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
         
         # ID10 - MPC Info
         # MPC_freq:
-        self.view_MPC_freq = False
-        self.pos_MPC_freq = [0, 0]
-        self.view_value_MPC_freq = True
+        self.view_MPC_freq = True
+        self.pos_MPC_freq = [3, 3]
+        self.view_value_MPC_freq = False
         self.pos_value_MPC_freq = [2, 2]
         # Airbrake_deflection_angle:
         self.view_Airbrake_deflection_angle = False
@@ -1716,9 +1719,9 @@ class FlightDataWindow(QtWidgets.QMainWindow): # Die Gesamtdarstellung der fligh
             plotwith = [   1,      1,          1,              1,             1,           1,           1,              1,          1]
         if id == 10:
             struktur = ["ID", "Time", "MPC_freq", "Airbrake_deflection_angle", "Target_angle"]
-            scaling = [    1,   1e-3,          1,                           1,              1]
-            unit = [      "",    "s",       "Hz",                         "°",            "°"]
-            plotwith = [   1,      1,     "solo",                           1,              1]
+            scaling = [    1,   1e-3,       1e-3,                           1,              1]
+            unit = [      "",    "s",       "µs",                         "°",            "°"]
+            plotwith = [   1,      1,          1,                           1,              1]
         if id == 17:
             struktur = ["ID", "Time", "State"]
             scaling = [    1,   1e-3,       1]
